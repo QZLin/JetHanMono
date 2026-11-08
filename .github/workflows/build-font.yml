@@ -1,0 +1,103 @@
+name: Build JetHan Mono
+
+# JetHan Mono = JetBrains Mono (英文/代码, 优先) + 思源等宽/Noto Sans Mono CJK SC (中文)
+#
+# 说明: Adobe 思源官方 OFL 声明保留字体名 'Source', JetBrains Mono 无 RFN
+# 但 'JetBrains' 为注册商标, 故衍生字体定名 JetHan Mono（中性新名, 合规）。
+#
+# 触发:
+#   - font-build/** 或本工作流变更推送至 main → 自动构建 + 上传产物
+#   - 手动 workflow_dispatch, 可选填 release_tag (如 jethan-v1.000)
+#     → 构建并创建 GitHub Release 附带字体文件
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '可选: 填写 tag 名(如 jethan-v1.000)则同时创建 GitHub Release'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'font-build/**'
+      - '.github/workflows/build-font.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-font-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 子集化 → CFF转TTF → 合并 → 校验
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安装依赖 (fontTools + brotli + uharfbuzz)
+        run: pip install fonttools brotli uharfbuzz
+
+      - name: 下载上游字体源 (JetBrains Mono v2.304 + Noto Sans Mono CJK SC)
+        run: bash font-build/tools/fetch_sources.sh
+
+      - name: 构建 (子集化 → CFF→TTF → pyftmerge → 重命名 → woff2 → 校验)
+        run: ./font-build/build.sh
+
+      - name: 产物完整性检查
+        run: |
+          ls -la font-build/output/
+          test -s font-build/output/JetHanMono-Regular.ttf
+          test -s font-build/output/JetHanMono-Bold.ttf
+          test -s font-build/output/JetHanMono-Regular.woff2
+          test -s font-build/output/JetHanMono-Bold.woff2
+          test -s font-build/output/JetHanMono-OFL.txt
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: JetHanMono-fonts
+          path: |
+            font-build/output/JetHanMono-Regular.ttf
+            font-build/output/JetHanMono-Bold.ttf
+            font-build/output/JetHanMono-Regular.woff2
+            font-build/output/JetHanMono-Bold.woff2
+            font-build/output/JetHanMono-OFL.txt
+          if-no-files-found: error
+
+  release:
+    name: 发布 GitHub Release
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: JetHanMono-fonts
+          path: dist
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: JetHan Mono ${{ github.event.inputs.release_tag }}
+          body: |
+            JetHan Mono — JetBrains Mono × 思源等宽 拼合字体
+
+            - 英文/代码字形: JetBrains Mono v2.304（优先, 含编程连字 calt）
+            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽）
+            - 许可: SIL OFL 1.1（思源保留字体名 'Source', 故本衍生字体另取名）
+          files: dist/*
+          fail_on_unmatched_files: true

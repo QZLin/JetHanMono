@@ -1,0 +1,16 @@
+# 统一 LF 行尾: 避免 Windows (autocrlf=true) 检出时 shell/python 脚本被 CRLF 破坏
+* text=auto eol=lf
+
+# 二进制文件不做任何转换
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db binary
+*.pdf binary
