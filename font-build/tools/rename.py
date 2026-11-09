@@ -230,15 +230,32 @@ def rename_font(path):
 
 
 def main():
-    paths = sys.argv[1:]
-    if not paths:
-        sys.exit("usage: rename.py <font.ttf> [more.ttf ...]")
+    argv = sys.argv[1:]
+    if not argv:
+        sys.exit("usage: rename.py <font.ttf> [more.ttf ...]  |  --license-only <output_dir>")
 
-    for p in paths:
+    # --license-only: just (re)write JetHanMono-OFL.txt, no font touched.
+    # Used by build.sh's incremental OFL step so the license has its own
+    # dependency fingerprint (JetBrains OFL text + this script) independent
+    # of the per-weight rename steps.
+    if argv[0] == "--license-only":
+        if len(argv) != 2:
+            sys.exit("usage: rename.py --license-only <output_dir>")
+        out_dir = argv[1]
+        if not os.path.isdir(out_dir):
+            sys.exit(f"ERROR: output dir not found: {out_dir}")
+        lic = make_license_text()
+        lic_path = os.path.join(out_dir, "JetHanMono-OFL.txt")
+        with open(lic_path, "w", encoding="utf-8") as fh:
+            fh.write(lic)
+        print(f"license file written: {lic_path} ({len(lic)} bytes)")
+        return
+
+    for p in argv:
         rename_font(p)
 
     lic = make_license_text()
-    lic_path = os.path.join(os.path.dirname(paths[0]) or ".", "JetHanMono-OFL.txt")
+    lic_path = os.path.join(os.path.dirname(argv[0]) or ".", "JetHanMono-OFL.txt")
     with open(lic_path, "w", encoding="utf-8") as fh:
         fh.write(lic)
     print(f"license file written: {lic_path} ({len(lic)} bytes)")
