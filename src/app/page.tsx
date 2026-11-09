@@ -284,7 +284,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="code-scroll max-h-96 overflow-y-auto rounded-xl bg-zinc-900 p-4 text-zinc-100">
+              <div className="code-scroll max-h-96 overflow-x-auto overflow-y-auto rounded-xl bg-zinc-900 p-4 text-zinc-100">
                 <pre
                   className={cn('whitespace-pre text-xs leading-relaxed sm:text-sm', monoFontClass)}
                   style={ligatureStyle}
@@ -483,6 +483,24 @@ export default function Home() {
                     </div>
                   </div>
                 ))}
+
+                {/* 源码包（构建管线 + 工具 + CI，不含字体二进制） */}
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed p-3">
+                  <span className="font-jethan text-sm font-semibold">JetHanMono-src.zip</span>
+                  <span className="hidden text-xs text-muted-foreground lg:inline">
+                    源码包 — 构建管线 + 工具脚本 + CI（不含字体）
+                  </span>
+                  <Button asChild variant="outline" size="sm" className="ml-auto">
+                    <a
+                      href="/JetHanMono-src.zip"
+                      download="JetHanMono-src.zip"
+                      aria-label="下载 JetHanMono-src.zip 源码包"
+                    >
+                      <Download className="size-3.5" aria-hidden="true" />
+                      <span className="font-jethan">zip</span>
+                    </a>
+                  </Button>
+                </div>
 
                 {/* 许可证 */}
                 <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed p-3">
