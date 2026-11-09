@@ -165,12 +165,14 @@ def rename_font(path):
 
     # 3) fsSelection / macStyle: enforce RIBBI bits per weight so apps
     #    (Windows font picker, LibreOffice, macOS font book) classify right
+    #    非 RIBBI 字重的 legacy subfamily 是 "Regular", 同样置 REGULAR 位
+    #    (只有 Bold 例外 -> BOLD 位); 保留 USE_TYPO_METRICS(0x80) 等其它位
     fs = f["OS/2"].fsSelection
     fs &= ~(FS_REGULAR | FS_BOLD | FS_ITALIC)
-    if weight == 400:
-        fs |= FS_REGULAR
-    elif weight == 700:
+    if weight == 700:
         fs |= FS_BOLD
+    else:
+        fs |= FS_REGULAR
     f["OS/2"].fsSelection = fs
 
     mac = f["head"].macStyle
@@ -183,6 +185,10 @@ def rename_font(path):
     # was 600, which no longer describes the merged font
     amax = max(a for a, _lsb in f["hmtx"].metrics.values())
     f["hhea"].advanceWidthMax = amax
+
+    # fontTools Merger 将 isFixedPitch 清零; 恢复上游 JBM 的 1 (等宽声明,
+    # Windows 命令提示符 / gVim / 部分检测器会读取; JetBrains IDE 不读它)
+    f["post"].isFixedPitch = 1
 
     f.save(path)
     n16 = name.getDebugName(16)
