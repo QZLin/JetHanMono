@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -361,3 +361,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# font-build 中间产物 (subsetted/converted 由 build.sh 随时重新生成)
+font-build/subsetted/
+font-build/converted/

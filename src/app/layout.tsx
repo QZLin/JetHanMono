@@ -14,24 +14,24 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  title: "JetHan Mono — JetBrains Mono × 思源等宽拼合字体",
+  description:
+    "JetBrains Mono（拉丁/代码/编程连字优先）与思源等宽（中文）拼合的等宽字体：拉丁 600u、中文 1200u，终端 1 汉字恰占 2 英文格。提供 Thin → ExtraBold 共 8 档字重。",
+  keywords: ["JetHan Mono", "JetBrains Mono", "思源等宽", "Source Han Mono", "Noto Sans Mono CJK SC", "等宽字体", "编程字体", "中英混排"],
+  authors: [{ name: "QZLin" }],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/logo.svg",
   },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "JetHan Mono — JetBrains Mono × 思源等宽拼合字体",
+    description:
+      "拉丁 600u、中文 1200u，终端 1 汉字恰占 2 英文格；8 档字重，SIL OFL 1.1 许可。",
     type: "website",
   },
   twitter: {
-    card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    card: "summary",
+    title: "JetHan Mono — JetBrains Mono × 思源等宽拼合字体",
+    description: "终端严格 2:1 中英等宽的拼合字体，8 档字重。",
   },
 };
 
@@ -41,7 +41,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="zh-CN" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >

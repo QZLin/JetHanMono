@@ -123,7 +123,36 @@
 
 /* ============================================================
    JetHan Mono — JetBrains Mono × 思源等宽 拼合字体
+   8 个罗马字重（CJK 侧无 Heavy/ExtraLight，按 usWeightClass 就近映射：
+   ExtraLight→Light、SemiBold→Bold、ExtraBold→Black）
    ============================================================ */
+@font-face {
+  font-family: 'JetHan Mono';
+  src: url('/fonts/JetHanMono-Thin.woff2') format('woff2'),
+       url('/fonts/JetHanMono-Thin.ttf') format('truetype');
+  font-weight: 100;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetHan Mono';
+  src: url('/fonts/JetHanMono-ExtraLight.woff2') format('woff2'),
+       url('/fonts/JetHanMono-ExtraLight.ttf') format('truetype');
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetHan Mono';
+  src: url('/fonts/JetHanMono-Light.woff2') format('woff2'),
+       url('/fonts/JetHanMono-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: 'JetHan Mono';
   src: url('/fonts/JetHanMono-Regular.woff2') format('woff2'),
@@ -135,9 +164,36 @@
 
 @font-face {
   font-family: 'JetHan Mono';
+  src: url('/fonts/JetHanMono-Medium.woff2') format('woff2'),
+       url('/fonts/JetHanMono-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetHan Mono';
+  src: url('/fonts/JetHanMono-SemiBold.woff2') format('woff2'),
+       url('/fonts/JetHanMono-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetHan Mono';
   src: url('/fonts/JetHanMono-Bold.woff2') format('woff2'),
        url('/fonts/JetHanMono-Bold.ttf') format('truetype');
   font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetHan Mono';
+  src: url('/fonts/JetHanMono-ExtraBold.woff2') format('woff2'),
+       url('/fonts/JetHanMono-ExtraBold.ttf') format('truetype');
+  font-weight: 800;
   font-style: normal;
   font-display: swap;
 }

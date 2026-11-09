@@ -32,9 +32,9 @@ concurrency:
 
 jobs:
   build:
-    name: 子集化 → CFF转TTF → 合并 → 校验
+    name: 子集化 → CFF转TTF → 合并 → 校验 (8 字重)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -46,19 +46,19 @@ jobs:
       - name: 安装依赖 (fontTools + brotli + uharfbuzz)
         run: pip install fonttools brotli uharfbuzz
 
-      - name: 下载上游字体源 (JetBrains Mono v2.304 + Noto Sans Mono CJK SC)
+      - name: 下载上游字体源 (JetBrains Mono v2.304 x8 字重 + Noto Sans Mono CJK SC x7 字重)
         run: bash font-build/tools/fetch_sources.sh
 
-      - name: 构建 (子集化 → CFF→TTF → pyftmerge → 重命名 → woff2 → 校验)
+      - name: 构建 (子集化 → CFF→TTF → CJK 1200u → 合并(Merger API) → 重命名 → woff2 → 校验)
         run: ./font-build/build.sh
 
-      - name: 产物完整性检查
+      - name: 产物完整性检查 (8 字重 x ttf+woff2 + OFL)
         run: |
           ls -la font-build/output/
-          test -s font-build/output/JetHanMono-Regular.ttf
-          test -s font-build/output/JetHanMono-Bold.ttf
-          test -s font-build/output/JetHanMono-Regular.woff2
-          test -s font-build/output/JetHanMono-Bold.woff2
+          for W in Thin ExtraLight Light Regular Medium SemiBold Bold ExtraBold; do
+            test -s font-build/output/JetHanMono-$W.ttf
+            test -s font-build/output/JetHanMono-$W.woff2
+          done
           test -s font-build/output/JetHanMono-OFL.txt
 
       - name: 上传构建产物
@@ -66,10 +66,8 @@ jobs:
         with:
           name: JetHanMono-fonts
           path: |
-            font-build/output/JetHanMono-Regular.ttf
-            font-build/output/JetHanMono-Bold.ttf
-            font-build/output/JetHanMono-Regular.woff2
-            font-build/output/JetHanMono-Bold.woff2
+            font-build/output/JetHanMono-*.ttf
+            font-build/output/JetHanMono-*.woff2
             font-build/output/JetHanMono-OFL.txt
           if-no-files-found: error
 
@@ -97,7 +95,9 @@ jobs:
             JetHan Mono — JetBrains Mono × 思源等宽 拼合字体
 
             - 英文/代码字形: JetBrains Mono v2.304（优先, 含编程连字 calt）
-            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽）
+            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u）
+            - 字重: Thin / ExtraLight / Light / Regular / Medium / SemiBold / Bold / ExtraBold 共 8 档
+              （CJK 侧无 Heavy/ExtraLight, 按 usWeightClass 就近映射, 最重映射到 Noto Black）
             - 许可: SIL OFL 1.1（思源保留字体名 'Source', 故本衍生字体另取名）
           files: dist/*
           fail_on_unmatched_files: true

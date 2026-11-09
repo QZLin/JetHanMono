@@ -25,9 +25,14 @@ interface CjkSample {
   readonly size: number
 }
 
-interface DownloadItem {
-  readonly file: string
-  readonly size: string
+interface WeightDef {
+  readonly name: string
+  readonly css: number
+  /** CJK 侧字形来源（等宽版仅 Regular/Bold，其余来自 Noto Sans CJK SC 同源设计） */
+  readonly cjk: string
+  /** 文件大小（构建完成后回填） */
+  readonly ttfSize: string
+  readonly woff2Size: string
 }
 
 interface BuildInfoItem {
@@ -61,24 +66,39 @@ const CJK_SAMPLES: readonly CjkSample[] = [
   { text: '混排：当 price >= 100 且 qty != 0 时，输出『买入信号』。', size: 14 },
 ]
 
-/** 卡片 4 下载文件清单 */
-const DOWNLOADS: readonly DownloadItem[] = [
-  { file: 'JetHanMono-Regular.ttf', size: '12.5MB' },
-  { file: 'JetHanMono-Bold.ttf', size: '12.3MB' },
-  { file: 'JetHanMono-Regular.woff2', size: '4.9MB' },
-  { file: 'JetHanMono-Bold.woff2', size: '5.0MB' },
-  { file: 'JetHanMono-OFL.txt', size: '4.6KB' },
+/**
+ * 卡片 3/4 八档字重定义（JetBrains Mono 全系罗马字重；无 Heavy——上游最重
+ * ExtraBold 800）。CJK 侧：思源等宽只有 Regular/Bold，其余字重借 Noto Sans
+ * CJK SC（同源设计）按 usWeightClass 就近映射，平手取更重档。
+ */
+const WEIGHT_LIST: readonly WeightDef[] = [
+  { name: 'Thin', css: 100, cjk: 'CJK ← Sans Thin', ttfSize: '12.6MB', woff2Size: '4.2MB' },
+  { name: 'ExtraLight', css: 200, cjk: 'CJK ← Sans Light', ttfSize: '12.6MB', woff2Size: '4.7MB' },
+  { name: 'Light', css: 300, cjk: 'CJK ← Sans Light', ttfSize: '12.6MB', woff2Size: '4.7MB' },
+  { name: 'Regular', css: 400, cjk: 'CJK ← 等宽 Regular', ttfSize: '12.5MB', woff2Size: '4.9MB' },
+  { name: 'Medium', css: 500, cjk: 'CJK ← Sans Medium', ttfSize: '12.4MB', woff2Size: '5.0MB' },
+  { name: 'SemiBold', css: 600, cjk: 'CJK ← 等宽 Bold', ttfSize: '12.3MB', woff2Size: '5.0MB' },
+  { name: 'Bold', css: 700, cjk: 'CJK ← 等宽 Bold', ttfSize: '12.3MB', woff2Size: '5.0MB' },
+  { name: 'ExtraBold', css: 800, cjk: 'CJK ← Sans Black', ttfSize: '12.2MB', woff2Size: '4.9MB' },
 ]
 
 /** 卡片 4 构建配方信息 */
 const BUILD_INFO: readonly BuildInfoItem[] = [
   {
     label: 'JetBrains Mono v2.304',
-    detail: '英文 / 代码字形来源，优先级最高',
+    detail: '英文 / 代码字形来源，8 档罗马字重（Thin 100 → ExtraBold 800）全部优先',
   },
   {
-    label: 'Noto Sans Mono CJK SC / 思源等宽简体中文',
-    detail: '补充中文 44,071 码位（步进吸附至 1200u 宽格）',
+    label: '思源等宽（Noto Sans Mono CJK SC）Regular + Bold',
+    detail: '等宽中文：Regular/Bold 两个最常用字重直接用等宽版，补充约 44,000 码位（1200u 宽格）',
+  },
+  {
+    label: 'Noto Sans CJK SC（其余 6 档字重的 CJK 侧）',
+    detail: '思源等宽本身只有 R/B 两档，其余字重的中文借 Source Han Sans 同源设计（CJK 字形一致、步进同为 1000u）',
+  },
+  {
+    label: '字重映射：就近映射 + 平手取重',
+    detail: 'Thin→Thin、ExtraLight→Light、Light→Light、Medium→Medium、SemiBold→Bold、ExtraBold→Black；中文无 Heavy，最重到 Black',
   },
   {
     label: '等宽网格 2:1（中文 1200u）',
@@ -86,7 +106,7 @@ const BUILD_INFO: readonly BuildInfoItem[] = [
   },
   {
     label: '命名 JetHan Mono（不可叫 JetBrains-Source-Han-Mono）',
-    detail: '思源 OFL 保留字体名 "Source"，衍生名禁用；JetBrains Mono 无 RFN 但属注册商标，故取中性新名',
+    detail: '思源 OFL 保留字体名 "Source"，衍生名禁用；JetBrains Mono 无 RFN 但属注册商标，故取中性新名；非 RIBBI 字重走 family+16/17 排版族名规范',
   },
   {
     label: '工具链 fontTools subset + cu2qu + Merger API',
@@ -94,7 +114,7 @@ const BUILD_INFO: readonly BuildInfoItem[] = [
   },
   {
     label: '校验 fontTools 静态检查 + HarfBuzz shaping 对比',
-    detail: '拼合前后 shaping 结果一致性验证，含区块级宽度不变量（宽格 1200 / 半角 600）',
+    detail: '每档字重独立校验：拼合前后 shaping 一致性 + 区块级宽度不变量（宽格 1200 / 半角 600）',
   },
   {
     label: 'Windows (Git Bash / MSYS2) 可直接构建',
@@ -102,21 +122,17 @@ const BUILD_INFO: readonly BuildInfoItem[] = [
   },
   {
     label: 'CI: GitHub Actions build-font',
-    detail: 'font-build 变更自动构建并上传产物，手动 dispatch 可发 Release',
+    detail: 'font-build 变更自动构建 8 档字重并上传产物，手动 dispatch 可发 Release',
   },
 ]
 
 const HEADER_BADGES: readonly { readonly text: string; readonly className: string }[] = [
   { text: 'calt 连字 ✓', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
-  { text: 'CJK 45,314 字形', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  { text: '8 档字重', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  { text: 'CJK ~44,000 码位', className: 'border-amber-200 bg-amber-50 text-amber-700' },
   { text: '中英混排 ✓', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
   { text: '终端 2:1 等宽 ✓', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
   { text: 'OFL-1.1', className: 'border-zinc-200 bg-zinc-50 text-zinc-600' },
-]
-
-const WEIGHT_SAMPLES: readonly { readonly label: string; readonly weight: number }[] = [
-  { label: 'Regular 400', weight: 400 },
-  { label: 'Bold 700', weight: 700 },
 ]
 
 export default function Home() {
@@ -125,7 +141,8 @@ export default function Home() {
   const [ligaOn, setLigaOn] = useState<boolean>(true)
   const [fontStatus, setFontStatus] = useState<FontStatus>('loading')
 
-  // 字体预加载：仅在客户端 useEffect 中执行，避免 hydration mismatch
+  // 字体预加载：仅在客户端 useEffect 中执行，避免 hydration mismatch。
+  // 只急加载 Regular/Bold 两档（页面主文案），其余字重由浏览器按需加载
   useEffect(() => {
     let cancelled = false
 
@@ -209,7 +226,7 @@ export default function Home() {
           {fontStatus === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-              <span>正在加载字体文件（woff2 Regular 4.9MB / Bold 5.0MB），首次加载需要一些时间…</span>
+              <span>正在加载字体（Regular / Bold woff2），首次加载需要一些时间，其余字重按需加载…</span>
             </div>
           ) : fontStatus === 'loaded' ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -217,7 +234,7 @@ export default function Home() {
                 字体加载完成
               </Badge>
               <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
-                Regular 4.9MB · Bold 5.0MB · woff2
+                Regular / Bold 已就绪 · 其余 6 档字重按需加载 · woff2
               </Badge>
             </div>
           ) : (
@@ -365,30 +382,39 @@ export default function Home() {
           </Card>
         </section>
 
-        {/* ===================== 卡片 3 · 字重与易混字符 ===================== */}
-        <section aria-label="字重与易混字符">
+        {/* ===================== 卡片 3 · 八档字重 ===================== */}
+        <section aria-label="八档字重">
           <Card>
             <CardHeader>
-              <CardTitle>字重与易混字符</CardTitle>
+              <CardTitle>八档字重</CardTitle>
               <CardDescription>
-                Regular 与 Bold 两个字重的大字号样例，以及针对易混字符的鉴别设计。
+                Thin 100 → ExtraBold 800 全系罗马字重（上游无 Heavy）；CJK
+                侧无对应字重时按 usWeightClass 就近映射，同源设计保证灰度衔接。
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {WEIGHT_SAMPLES.map((sample) => (
-                <div
-                  key={sample.label}
-                  className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
-                >
-                  <p
-                    className={cn('text-xl sm:text-2xl', monoFontClass)}
-                    style={{ fontWeight: sample.weight }}
-                  >
-                    快速棕狐跳过懒狗 0123456789
-                  </p>
-                  <Badge variant="secondary" className="shrink-0">
-                    {sample.label}
-                  </Badge>
+              {WEIGHT_LIST.map((sample, index) => (
+                <div key={sample.name}>
+                  {index > 0 && <Separator className="mb-4" />}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+                    <p
+                      className={cn('text-xl sm:text-2xl', monoFontClass)}
+                      style={{ fontWeight: sample.css }}
+                    >
+                      快速棕狐跳过懒狗 0123456789 {(sample.css / 100).toFixed(1)}
+                    </p>
+                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                      <Badge variant="secondary">
+                        {sample.name} {sample.css}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="border-zinc-200 bg-zinc-50 text-xs text-zinc-600"
+                      >
+                        {sample.cjk}
+                      </Badge>
+                    </div>
+                  </div>
                 </div>
               ))}
 
@@ -414,23 +440,67 @@ export default function Home() {
           <Card>
             <CardHeader>
               <CardTitle>下载与构建信息</CardTitle>
-              <CardDescription>下载完整字体文件，或了解本字体的构建配方与校验流程。</CardDescription>
+              <CardDescription>每档字重提供 ttf（桌面安装）与 woff2（Web）两种格式。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {DOWNLOADS.map((item) => (
-                  <Button key={item.file} asChild variant="outline">
+              {/* 按字重分行：ttf / woff2 双格式下载 */}
+              <div className="space-y-2" aria-label="字体文件下载">
+                {WEIGHT_LIST.map((w) => (
+                  <div
+                    key={w.name}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3"
+                  >
+                    <span className="font-jethan text-sm font-semibold">
+                      JetHanMono-{w.name}
+                    </span>
+                    <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
+                      {w.css}
+                    </Badge>
+                    <span className="hidden text-xs text-muted-foreground lg:inline">{w.cjk}</span>
+                    <div className="ml-auto flex flex-wrap gap-2">
+                      <Button asChild variant="outline" size="sm">
+                        <a
+                          href={`/fonts/JetHanMono-${w.name}.ttf`}
+                          download={`JetHanMono-${w.name}.ttf`}
+                          aria-label={`下载 JetHanMono-${w.name}.ttf（${w.ttfSize}）`}
+                        >
+                          <Download className="size-3.5" aria-hidden="true" />
+                          <span className="font-jethan">ttf</span>
+                          <span className="text-xs text-muted-foreground">{w.ttfSize}</span>
+                        </a>
+                      </Button>
+                      <Button asChild variant="outline" size="sm">
+                        <a
+                          href={`/fonts/JetHanMono-${w.name}.woff2`}
+                          download={`JetHanMono-${w.name}.woff2`}
+                          aria-label={`下载 JetHanMono-${w.name}.woff2（${w.woff2Size}）`}
+                        >
+                          <Download className="size-3.5" aria-hidden="true" />
+                          <span className="font-jethan">woff2</span>
+                          <span className="text-xs text-muted-foreground">{w.woff2Size}</span>
+                        </a>
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+
+                {/* 许可证 */}
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed p-3">
+                  <span className="font-jethan text-sm font-semibold">JetHanMono-OFL.txt</span>
+                  <span className="hidden text-xs text-muted-foreground lg:inline">
+                    双上游版权声明 + OFL 1.1 全文
+                  </span>
+                  <Button asChild variant="outline" size="sm" className="ml-auto">
                     <a
-                      href={`/fonts/${item.file}`}
-                      download={item.file}
-                      aria-label={`下载 ${item.file}（${item.size}）`}
+                      href="/fonts/JetHanMono-OFL.txt"
+                      download="JetHanMono-OFL.txt"
+                      aria-label="下载 JetHanMono-OFL.txt"
                     >
-                      <Download className="size-4" aria-hidden="true" />
-                      <span className="font-jethan">{item.file}</span>
-                      <span className="ml-auto text-xs text-muted-foreground">{item.size}</span>
+                      <Download className="size-3.5" aria-hidden="true" />
+                      <span className="font-jethan">txt</span>
                     </a>
                   </Button>
-                ))}
+                </div>
               </div>
 
               <Separator />
@@ -454,7 +524,7 @@ export default function Home() {
       {/* ===================== Footer（sticky footer） ===================== */}
       <footer className="mt-auto border-t">
         <div className="mx-auto w-full max-w-4xl px-4 py-6 text-center text-sm text-muted-foreground">
-          JetHan Mono · 基于 JetBrains Mono 与思源等宽拼合 · SIL OFL 1.1 许可
+          JetHan Mono · 基于 JetBrains Mono 与思源等宽拼合 · 8 档字重 · SIL OFL 1.1 许可
         </div>
       </footer>
     </div>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rename the merged font family to 'JetHan Mono' (Regular/Bold).
+"""Rename the merged font family to 'JetHan Mono' (all weights).
 
 Why a rename at all:
   Source Han Mono / Noto Sans Mono CJK OFL declares "Source"/"Noto" as
@@ -11,12 +11,21 @@ This script REBUILDS the name table instead of patching a few IDs, so no
 leftover metadata from either upstream survives:
 
   - deleted leftovers: 7 (trademark - described JetBrains Mono, wrong font),
-    11/12 (vendor URL - JetBrains only), 16/17 (duplicated 1/2, redundant
-    for a simple RIBBI family), 250+ (JetBrains variable-font axis names
-    like "Broken equals ligatures")
+    11/12 (vendor URL - JetBrains only), 250+ (JetBrains variable-font axis
+    names like "Broken equals ligatures")
   - nameID 0/9/10 now credit BOTH upstream projects (OFL requires the
     copyright notices of the original fonts be preserved)
   - nameID 5 gets its own version, not JetBrains' 2.304
+
+Multi-weight naming follows the Microsoft legacy family/subfamily model:
+  - RIBBI styles (Regular/Bold):  nameID 1 = "JetHan Mono",
+    nameID 2 = "Regular"/"Bold"  -> apps can style-link them
+  - other weights (Thin .. ExtraBold/Black): nameID 1 = "JetHan Mono <Weight>"
+    (legacy family), nameID 2 = "Regular" (legacy subfamily), and the
+    typographic pair nameID 16 = "JetHan Mono" / 17 = "<Weight>" carries the
+    real grouping.  This is exactly how Noto/JetBrains ship their statics.
+  - fsSelection REGULAR(0x40)/BOLD(0x20) bits and head.macStyle bold bit are
+    enforced per weight so apps don't mis-detect RIBBI status.
 
 Also writes output/JetHanMono-OFL.txt (both copyright headers + OFL 1.1
 body) for distribution compliance.
@@ -31,6 +40,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FAMILY = "JetHan Mono"
 VERSION = "1.000"
 BUILDER = "fontbuild"
+
+# usWeightClass -> subfamily/weight name (Microsoft + Google Fonts naming)
+WEIGHT_NAMES = {
+    100: "Thin",
+    200: "ExtraLight",
+    300: "Light",
+    400: "Regular",
+    500: "Medium",
+    600: "SemiBold",
+    700: "Bold",
+    800: "ExtraBold",
+    900: "Black",
+}
+RIBBI = ("Regular", "Bold")
+
+# fsSelection bits
+FS_ITALIC = 0x0001
+FS_BOLD = 0x0020
+FS_REGULAR = 0x0040
+# head.macStyle bits
+MAC_BOLD = 0x0001
+MAC_ITALIC = 0x0002
 
 COPYRIGHT = (
     "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)\n"
@@ -50,8 +81,8 @@ DESCRIPTION = (
     "ink centered with symmetric side bearings."
 )
 
-# IDs we fully control (rebuilt from scratch below)
-SET_IDS = (0, 1, 2, 3, 4, 5, 6, 9, 10, 13, 14)
+# IDs we fully control (rebuilt from scratch below); 16/17 added per weight
+SET_IDS = (0, 1, 2, 3, 4, 5, 6, 9, 10, 13, 14, 16, 17)
 
 
 def set_name(font, nameID, value):
@@ -93,7 +124,10 @@ def rename_font(path):
     f = TTFont(path)
     name = f["name"]
     weight = f["OS/2"].usWeightClass
-    sub = "Bold" if weight >= 600 else "Regular"
+    if weight not in WEIGHT_NAMES:
+        sys.exit(f"ERROR: {path}: unknown usWeightClass {weight} - "
+                 f"expected one of {sorted(WEIGHT_NAMES)}")
+    sub = WEIGHT_NAMES[weight]
     ps = FAMILY.replace(" ", "") + "-" + sub
     full = f"{FAMILY} {sub}"
 
@@ -103,8 +137,6 @@ def rename_font(path):
 
     # 2) write the full, clean set
     set_name(f, 0, COPYRIGHT)
-    set_name(f, 1, FAMILY)                                  # family
-    set_name(f, 2, sub)                                     # subfamily
     set_name(f, 3, f"{ps};{VERSION};{BUILDER}")             # unique ID
     set_name(f, 4, full)                                    # full name
     set_name(f, 5, f"Version {VERSION};{BUILDER}")          # version (was JetBrains' 2.304)
@@ -116,9 +148,36 @@ def rename_font(path):
                      "https://scripts.sil.org/OFL"))
     set_name(f, 14, "https://scripts.sil.org/OFL")
 
-    # NOTE: nameID 7 (trademark), 11/12 (vendor), 16/17 (typographic names,
-    # redundant when identical to 1/2) and 256+ (fvar axis labels) are
-    # intentionally absent.
+    # legacy family/subfamily (1/2) + typographic family/subfamily (16/17)
+    if sub in RIBBI:
+        set_name(f, 1, FAMILY)            # family
+        set_name(f, 2, sub)               # subfamily
+    else:
+        # non-RIBBI: legacy family must be unique per weight, legacy
+        # subfamily folds to "Regular"; 16/17 carry the real grouping
+        set_name(f, 1, f"{FAMILY} {sub}")  # legacy family
+        set_name(f, 2, "Regular")          # legacy subfamily
+        set_name(f, 16, FAMILY)            # typographic family
+        set_name(f, 17, sub)               # typographic subfamily
+
+    # NOTE: nameID 7 (trademark), 11/12 (vendor) and 256+ (fvar axis labels)
+    # are intentionally absent.
+
+    # 3) fsSelection / macStyle: enforce RIBBI bits per weight so apps
+    #    (Windows font picker, LibreOffice, macOS font book) classify right
+    fs = f["OS/2"].fsSelection
+    fs &= ~(FS_REGULAR | FS_BOLD | FS_ITALIC)
+    if weight == 400:
+        fs |= FS_REGULAR
+    elif weight == 700:
+        fs |= FS_BOLD
+    f["OS/2"].fsSelection = fs
+
+    mac = f["head"].macStyle
+    mac &= ~(MAC_BOLD | MAC_ITALIC)
+    if weight == 700:
+        mac |= MAC_BOLD
+    f["head"].macStyle = mac
 
     # metric fixup: CJK glyphs are 1200u wide; JetBrains' hhea.advanceWidthMax
     # was 600, which no longer describes the merged font
@@ -126,10 +185,11 @@ def rename_font(path):
     f["hhea"].advanceWidthMax = amax
 
     f.save(path)
-    print(f"{path}: family='{FAMILY}' sub='{sub}' ps='{ps}' v={VERSION} "
-          f"weightClass={weight} fsSelection={f['OS/2'].fsSelection:#06x} "
-          f"macStyle={f['head'].macStyle:#04x} nameRecords={len(name.names)} "
-          f"advanceWidthMax={amax}")
+    n16 = name.getDebugName(16)
+    print(f"{path}: family(1)='{name.getDebugName(1)}' sub(2)='{name.getDebugName(2)}' "
+          f"typo16={n16!r} typo17={name.getDebugName(17)!r} ps='{ps}' v={VERSION} "
+          f"weightClass={weight} fsSelection={fs:#06x} macStyle={mac:#04x} "
+          f"nameRecords={len(name.names)} advanceWidthMax={amax}")
 
 
 def main():
