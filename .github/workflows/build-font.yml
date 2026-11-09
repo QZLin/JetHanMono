@@ -7,18 +7,20 @@ name: Build JetHan Mono
 #
 # 触发:
 #   - font-build/** 或本工作流变更推送至 main → 自动构建 + 上传产物
-#   - 手动 workflow_dispatch, 可选填 release_tag (如 jethan-v1.000)
+#   - 推送 tag jethan-v* (如 jethan-v1.000) → 构建并自动创建 GitHub Release
+#   - 手动 workflow_dispatch, 默认 tag jethan-v1.000, 可自定义
 #     → 构建并创建 GitHub Release 附带字体文件
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: '可选: 填写 tag 名(如 jethan-v1.000)则同时创建 GitHub Release'
+        description: 'Release tag 名（默认 jethan-v1.000，构建后自动发布）'
         required: false
-        default: ''
+        default: 'jethan-v1.000'
   push:
     branches: [main]
+    tags: ['jethan-v*']
     paths:
       - 'font-build/**'
       - '.github/workflows/build-font.yml'
@@ -50,7 +52,7 @@ jobs:
         run: bash font-build/tools/fetch_sources.sh
 
       - name: 构建 (子集化 → CFF→TTF → CJK 1200u → 合并(Merger API) → 重命名 → woff2 → 校验)
-        run: ./font-build/build.sh
+        run: bash font-build/build.sh
 
       - name: 产物完整性检查 (8 字重 x ttf+woff2 + OFL)
         run: |
@@ -73,7 +75,9 @@ jobs:
 
   release:
     name: 发布 GitHub Release
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+      || startsWith(github.ref, 'refs/tags/jethan-v')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -89,8 +93,8 @@ jobs:
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: JetHan Mono ${{ github.event.inputs.release_tag }}
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          name: JetHan Mono ${{ github.event.inputs.release_tag || github.ref_name }}
           body: |
             JetHan Mono — JetBrains Mono × 思源等宽 拼合字体
 

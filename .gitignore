@@ -371,3 +371,7 @@ skills/
 download/
 upload/
 public/*.zip
+
+# 字体产物一律不入库（由 CI 构建并发布 Release）
+public/fonts/
+font-build/output/
