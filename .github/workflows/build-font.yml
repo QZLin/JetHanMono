@@ -14,6 +14,8 @@ name: Build JetHan Mono
 # 上游字体缓存:
 #   JetBrains Mono + Noto CJK 源字体 (~140MB) 存入 actions/cache;
 #   key 绑定下方 env 的上游版本号, 升级上游时改 env 即自动换 key 重新下载。
+#   actions 版本由 dependabot (github-actions 生态, 每周) 自动跟进;
+#   当前全部 target node24 (Node 20 已于 2025-09 弃言, 详见 GH changelog)。
 
 env:
   JB_VERSION: '2.304'   # JetBrains Mono 发布 tag (fetch_sources.sh 与 cache key 共用)
@@ -46,9 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip'
@@ -58,7 +60,7 @@ jobs:
 
       - name: 恢复上游字体缓存 (JetBrains Mono + Noto CJK, ~140MB)
         id: font-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: font-build/downloads
           # key 绑定上游版本号: 升级 env.JB_VERSION / env.NOTO_TAG 即自动失效重拉
@@ -84,7 +86,7 @@ jobs:
 
       - name: 恢复中间产物缓存 (subsetted/ converted/ output/; 未变步骤由 build.sh 指纹跳过)
         id: mid-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             font-build/subsetted
@@ -111,7 +113,7 @@ jobs:
           test -s font-build/output/JetHanMono-OFL.txt
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: JetHanMono-fonts
           path: |
@@ -132,15 +134,16 @@ jobs:
       contents: write
     steps:
       - name: 下载构建产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: JetHanMono-fonts
           path: dist
 
       - name: 创建 Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          overwrite_files: true  # 同名资产直接替换, 支持 workflow_dispatch 覆盖更新已发布 Release
           name: JetHan Mono ${{ github.event.inputs.release_tag || github.ref_name }}
           body: |
             JetHan Mono — JetBrains Mono × 思源等宽 拼合字体

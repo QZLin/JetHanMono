@@ -1,0 +1,19 @@
+# Dependabot 自动依赖更新
+#
+# github-actions 生态: 扫描 .github/workflows/*.yml 里的 `uses:` 引用,
+#   有新版本时自动开 PR。
+#   - minor/patch 打包成一个 PR (groups), 避免小版本刷屏
+#   - major 升级单独开 PR, 便于逐个评估 breaking changes
+#   每周一检查一次; 配合 workflow 顶部注释的 node24 基线,
+#   若某个 action 发布新 major 导致运行时/行为变化, PR 会单独列出。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
