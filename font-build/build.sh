@@ -19,6 +19,17 @@
 #      bash build.sh Medium ExtraBold   # 只构建指定字重 (增量调试)
 # 产物: output/JetHanMono-<Weight>.ttf/.woff2 (x8) + JetHanMono-OFL.txt
 #
+# 步骤级增量 (CI 缓存友好):
+#   每步执行后把"输入文件联合 sha256"写入 <标记> 文件; 重跑时输入指纹未变
+#   + 输出仍在 => 跳过该步。配合 CI actions/cache 持久化 subsetted/
+#   converted/ output/ 三个目录, 未改变的步骤跨次运行直接命中 (例如只改
+#   rename.py 时, 子集化/转换/拉宽/拼合全部跳过, 只重跑改名+woff2)。
+#   注意 otf2ttf 输出为 <name>.pre.ttf (scale 前的原始转换), scale 从
+#   .pre.ttf 复制后原地拉宽; merge 输出 output/.merged-<Weight>.ttf
+#   (rename 前的原始拼合), rename 从 .merged 复制后原地改名 —— 输入输出
+#   分离才能对"原地覆盖"型步骤做可靠的指纹判断。
+#   FORCE_BUILD=1 忽略指纹强制全量重建。
+#
 # 字重映射 (JetBrains 8 档 -> CJK 侧来源):
 #   思源等宽 (Noto Sans Mono CJK SC) 只有 Regular/Bold 两档字重;
 #   其余字重的 CJK 字形来自 Noto Sans CJK SC (Source Han Sans 同源,
@@ -81,36 +92,118 @@ cjk_weight() {
 
 mkdir -p subsetted converted output
 
+# ---- 步骤级增量助手: 输入指纹未变 + 输出存在 => 跳过 ----
+FORCE="${FORCE_BUILD:-0}"
+DEPHASH() { # DEPHASH <file...> -> 联合 sha256; 缺失文件也参与 hash => 触发重跑
+  local h=""
+  local f
+  for f in "$@"; do
+    if [ -s "$f" ]; then h="$h$(sha256sum "$f" | cut -d' ' -f1)"; else h="$h-"; fi
+  done
+  printf '%s' "$h" | sha256sum | cut -d' ' -f1
+}
+STEP_UP2DATE() { # STEP_UP2DATE <output> <dh> <input...>; 返回 0 => 可跳过
+  [ "$FORCE" = "1" ] && return 1
+  local out="$1" dh="$2"
+  shift 2
+  [ -s "$out" ] && [ -s "$dh" ] && [ "$(cat "$dh")" = "$(DEPHASH "$@")" ]
+}
+STEP_MARK() { local dh="$1"; shift; DEPHASH "$@" > "$dh"; }
+
 echo "== 1/6 子集化 CJK (仅保留 JetBrains 未覆盖的码位) =="
 for W in "${JB_WEIGHTS[@]}"; do
-  "$PYTHON_BIN" tools/subset_cjk.py "downloads/JetBrainsMono-$W.ttf" "downloads/$(cjk_weight "$W").otf" "subsetted/NotoMonoSC-$W.ttf"
+  NK="$(cjk_weight "$W")"
+  if STEP_UP2DATE "subsetted/NotoMonoSC-$W.ttf" "subsetted/.dh-$W.subset" \
+       "downloads/JetBrainsMono-$W.ttf" "downloads/$NK.otf" "tools/subset_cjk.py"; then
+    echo "  [$W] skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$W] run"
+    "$PYTHON_BIN" tools/subset_cjk.py "downloads/JetBrainsMono-$W.ttf" "downloads/$NK.otf" "subsetted/NotoMonoSC-$W.ttf"
+    STEP_MARK "subsetted/.dh-$W.subset" "downloads/JetBrainsMono-$W.ttf" "downloads/$NK.otf" "tools/subset_cjk.py"
+  fi
 done
 
-echo "== 2/6 CFF -> TrueType 轮廓转换 (cu2qu) =="
+echo "== 2/6 CFF -> TrueType 轮廓转换 (cu2qu, 输出 .pre.ttf 供 scale 增量) =="
 for W in "${JB_WEIGHTS[@]}"; do
-  "$PYTHON_BIN" tools/otf2ttf.py "subsetted/NotoMonoSC-$W.ttf" -o "converted/NotoMonoSC-$W.ttf" --overwrite
+  if STEP_UP2DATE "converted/NotoMonoSC-$W.pre.ttf" "converted/.dh-$W.otf2ttf" \
+       "subsetted/NotoMonoSC-$W.ttf" "tools/otf2ttf.py"; then
+    echo "  [$W] skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$W] run"
+    "$PYTHON_BIN" tools/otf2ttf.py "subsetted/NotoMonoSC-$W.ttf" -o "converted/NotoMonoSC-$W.pre.ttf" --overwrite
+    STEP_MARK "converted/.dh-$W.otf2ttf" "subsetted/NotoMonoSC-$W.ttf" "tools/otf2ttf.py"
+  fi
 done
 
 echo "== 3/6 CJK 步进拉宽 1000u -> 1200u (= 2 x 拉丁 600u, 字形居中留白) =="
 for W in "${JB_WEIGHTS[@]}"; do
-  "$PYTHON_BIN" tools/scale_cjk.py "converted/NotoMonoSC-$W.ttf"
+  if STEP_UP2DATE "converted/NotoMonoSC-$W.ttf" "converted/.dh-$W.scale" \
+       "converted/NotoMonoSC-$W.pre.ttf" "tools/scale_cjk.py"; then
+    echo "  [$W] skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$W] run"
+    cp -f "converted/NotoMonoSC-$W.pre.ttf" "converted/NotoMonoSC-$W.ttf"
+    "$PYTHON_BIN" tools/scale_cjk.py "converted/NotoMonoSC-$W.ttf"
+    STEP_MARK "converted/.dh-$W.scale" "converted/NotoMonoSC-$W.pre.ttf" "tools/scale_cjk.py"
+  fi
 done
 
-echo "== 4/6 拼合 (第一个字体优先, Merger API) =="
+echo "== 4/6 拼合 (第一个字体优先, Merger API; 输出 .merged-* 供 rename 增量) =="
 for W in "${JB_WEIGHTS[@]}"; do
-  "$PYTHON_BIN" tools/merge_fonts.py -o "output/JetHanMono-$W.ttf" "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf"
+  if STEP_UP2DATE "output/.merged-$W.ttf" "output/.dh-$W.merge" \
+       "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf" "tools/merge_fonts.py"; then
+    echo "  [$W] skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$W] run"
+    "$PYTHON_BIN" tools/merge_fonts.py -o "output/.merged-$W.ttf" "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf"
+    STEP_MARK "output/.dh-$W.merge" "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf" "tools/merge_fonts.py"
+  fi
 done
 
-echo "== 5/6 重命名 + 修正度量 + 导出 woff2 =="
-OUT_TTFS=()
-for W in "${JB_WEIGHTS[@]}"; do OUT_TTFS+=("output/JetHanMono-$W.ttf"); done
-"$PYTHON_BIN" tools/rename.py "${OUT_TTFS[@]}"
-"$PYTHON_BIN" tools/export_woff2.py "${OUT_TTFS[@]}"
-
-echo "== 6/6 校验 (静态度量 + HarfBuzz shaping) =="
+echo "== 5/6 重命名+度量锁定 / woff2 / OFL (均支持指纹跳过) =="
 for W in "${JB_WEIGHTS[@]}"; do
-  "$PYTHON_BIN" tools/verify.py "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf" "output/JetHanMono-$W.ttf"
-  "$PYTHON_BIN" tools/shape_test.py "downloads/JetBrainsMono-$W.ttf" "output/JetHanMono-$W.ttf"
+  if STEP_UP2DATE "output/JetHanMono-$W.ttf" "output/.dh-$W.rename" \
+       "output/.merged-$W.ttf" "tools/rename.py"; then
+    echo "  [$W] rename skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$W] rename run"
+    cp -f "output/.merged-$W.ttf" "output/JetHanMono-$W.ttf"
+    "$PYTHON_BIN" tools/rename.py "output/JetHanMono-$W.ttf"
+    STEP_MARK "output/.dh-$W.rename" "output/.merged-$W.ttf" "tools/rename.py"
+  fi
+  if STEP_UP2DATE "output/JetHanMono-$W.woff2" "output/.dh-$W.woff2" \
+       "output/JetHanMono-$W.ttf" "tools/export_woff2.py"; then
+    echo "  [$W] woff2 skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$W] woff2 run"
+    "$PYTHON_BIN" tools/export_woff2.py "output/JetHanMono-$W.ttf"
+    STEP_MARK "output/.dh-$W.woff2" "output/JetHanMono-$W.ttf" "tools/export_woff2.py"
+  fi
+done
+# OFL 许可证 (依赖 JetBrains OFL 原文 + rename.py)
+if STEP_UP2DATE "output/JetHanMono-OFL.txt" "output/.dh-ofl" \
+     "downloads/JetBrainsMono-OFL.txt" "tools/rename.py"; then
+  echo "  [OFL] skip (输入指纹未变, 命中缓存)"
+else
+  echo "  [OFL] run"
+  "$PYTHON_BIN" tools/rename.py --license-only output
+  STEP_MARK "output/.dh-ofl" "downloads/JetBrainsMono-OFL.txt" "tools/rename.py"
+fi
+
+echo "== 6/6 校验 (静态度量 + HarfBuzz shaping; 产物指纹未变则沿用上次结论) =="
+for W in "${JB_WEIGHTS[@]}"; do
+  VD="output/.dh-$W.verified"
+  if STEP_UP2DATE "$VD" "$VD" \
+       "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf" \
+       "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py"; then
+    echo "  [$W] skip (产物指纹未变, 校验结论沿用)"
+  else
+    echo "  [$W] run"
+    "$PYTHON_BIN" tools/verify.py "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf" "output/JetHanMono-$W.ttf"
+    "$PYTHON_BIN" tools/shape_test.py "downloads/JetBrainsMono-$W.ttf" "output/JetHanMono-$W.ttf"
+    STEP_MARK "$VD" "downloads/JetBrainsMono-$W.ttf" "converted/NotoMonoSC-$W.ttf" \
+      "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py"
+  fi
 done
 
 echo "完成! 产物在 output/, 复制到 web:"

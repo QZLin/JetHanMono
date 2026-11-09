@@ -82,7 +82,23 @@ jobs:
           done
           echo "上游字体文件齐全 (18 项)"
 
-      - name: 构建 (子集化 → CFF→TTF → CJK 1200u → 合并(Merger API) → 重命名 → woff2 → 校验)
+      - name: 恢复中间产物缓存 (subsetted/ converted/ output/; 未变步骤由 build.sh 指纹跳过)
+        id: mid-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            font-build/subsetted
+            font-build/converted
+            font-build/output
+          # 精确 key 绑定脚本内容: 任一管线脚本改动 -> miss;
+          # restore-keys 前缀兜底恢复最近一份旧产物, build.sh 内部再按
+          # 每步的输入 sha256 指纹决定跳过/重跑 —— 改 rename.py 不会
+          # 重跑子集化/转换/拉宽/拼合, 只有受影响的步骤真正执行。
+          key: jethan-mid-v2-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-${{ hashFiles('font-build/build.sh', 'font-build/tools/*.py') }}
+          restore-keys: |
+            jethan-mid-v2-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-
+
+      - name: 构建 (子集化 → CFF→TTF → CJK 1200u → 合并(Merger API) → 重命名 → woff2 → 校验; 步骤级增量)
         run: bash font-build/build.sh
 
       - name: 产物完整性检查 (8 字重 x ttf+woff2 + OFL)
