@@ -55,6 +55,12 @@ WEIGHT_NAMES = {
 }
 RIBBI = ("Regular", "Bold")
 
+# JetBrains Mono's vertical metrics (upm=1000): hhea 1020/-300/0 and
+# OS/2 win/typo identical.  The merged font must copy these EXACTLY so the
+# editor line height is indistinguishable from plain JetBrains Mono.
+JB_V_ASCENT = 1020
+JB_V_DESCENT = -300
+
 # fsSelection bits
 FS_ITALIC = 0x0001
 FS_BOLD = 0x0020
@@ -186,6 +192,29 @@ def rename_font(path):
     amax = max(a for a, _lsb in f["hmtx"].metrics.values())
     f["hhea"].advanceWidthMax = amax
 
+    # vertical metrics: LOCK to the exact JetBrains Mono values.
+    # The Merger merges numeric fields with max(), so hhea.ascent picked up
+    # the CJK source's 1160 (vs JetBrains' 1020) and usWinAscent likewise,
+    # making the editor line height ~10% taller than plain JetBrains Mono.
+    # Renderers disagree on WHICH table they honour: engines that respect
+    # OS/2 fsSelection USE_TYPO_METRICS(0x80) read sTypo* (already 1020/-300),
+    # but Windows DirectWrite inside the JetBrains Runtime and several other
+    # stacks read hhea/usWin* directly.  Setting ALL three metric sources to
+    # the same JetBrains values makes the line height identical to plain
+    # JetBrains Mono no matter which table the engine reads.
+    # Safety: CJK ink tops out around y=880-920 and bottoms at ~-140, well
+    # inside the 1020/-300 box, so no glyph gets clipped by this.
+    os2 = f["OS/2"]
+    f["hhea"].ascent = JB_V_ASCENT
+    f["hhea"].descent = JB_V_DESCENT
+    f["hhea"].lineGap = 0
+    os2.sTypoAscender = JB_V_ASCENT
+    os2.sTypoDescender = JB_V_DESCENT
+    os2.sTypoLineGap = 0
+    os2.usWinAscent = JB_V_ASCENT
+    os2.usWinDescent = -JB_V_DESCENT
+    # keep the USE_TYPO_METRICS bit so typo-metric engines stay consistent
+
     # fontTools Merger 将 isFixedPitch 清零; 恢复上游 JBM 的 1 (等宽声明,
     # Windows 命令提示符 / gVim / 部分检测器会读取; JetBrains IDE 不读它)
     f["post"].isFixedPitch = 1
@@ -195,7 +224,9 @@ def rename_font(path):
     print(f"{path}: family(1)='{name.getDebugName(1)}' sub(2)='{name.getDebugName(2)}' "
           f"typo16={n16!r} typo17={name.getDebugName(17)!r} ps='{ps}' v={VERSION} "
           f"weightClass={weight} fsSelection={fs:#06x} macStyle={mac:#04x} "
-          f"nameRecords={len(name.names)} advanceWidthMax={amax}")
+          f"nameRecords={len(name.names)} advanceWidthMax={amax} "
+          f"hheaAsc={f['hhea'].ascent} hheaDesc={f['hhea'].descent} "
+          f"winAsc={os2.usWinAscent} winDesc={os2.usWinDescent}")
 
 
 def main():

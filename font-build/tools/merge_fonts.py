@@ -15,11 +15,30 @@ Why not `pyftmerge --output-file OUT in1 in2`?
 
 Usage: merge_fonts.py -o OUT.ttf FIRST.ttf SECOND.ttf [...]
   FIRST font wins on cmap/metric conflicts (JetBrains Mono priority).
+
+Layout-table stripping (why):
+  fontTools Merger CONCATENATES the GSUB/GPOS/GDEF lookup lists of both
+  sources into one table.  That mixed table shapes fine under HarfBuzz,
+  but other shaping engines that an IDE may actually use (JDK's built-in
+  GlyphLayout, Windows DirectWrite inside JetBrains Runtime, macOS) are
+  far less forgiving; a mis-parsed pair-lookup applies bogus kerning
+  values and characters get pushed apart by a full extra cell (the gap
+  becomes part of the glyph's advance box in the editor selection).
+  Equal-width CJK needs NO kerning/GSUB of its own, so the safest merge
+  is: keep the FIRST font's layout tables verbatim and drop them from
+  every following source.  A table held by only one input is copied
+  verbatim by fontTools merge, so the output then contains JetBrains'
+  original untouched GSUB/GPOS/GDEF -- byte-equivalent behaviour on
+  every engine.
 """
 import argparse
 import os
 import sys
 import time
+
+# OpenType layout + legacy kerning tables: keep from FIRST font only.
+# (cmap/glyf/hmtx/etc. are unaffected and still merge normally)
+STRIP_TAGS = ("GSUB", "GPOS", "GDEF", "kern", "morx", "kerx", "mort")
 
 
 def main():
@@ -36,9 +55,27 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     from fontTools.merge import Merger
+    from fontTools.ttLib import TTFont
+
+    # strip layout tables from every non-primary source BEFORE merging
+    merge_paths = []
+    for i, p in enumerate(args.fonts):
+        if i == 0:
+            merge_paths.append(p)
+            continue
+        f = TTFont(p)
+        dropped = [t for t in STRIP_TAGS if t in f]
+        for t in dropped:
+            del f[t]
+        if dropped:
+            print(f"stripped layout tables from source {i} ({p.split('/')[-1]}): "
+                  f"{','.join(dropped)}")
+        sp = p[:-4] + ".nolayout.ttf" if p.endswith(".ttf") else p + ".nolayout.ttf"
+        f.save(sp)
+        merge_paths.append(sp)
 
     t0 = time.time()
-    merged = Merger().merge(args.fonts)
+    merged = Merger().merge(merge_paths)
     merged.save(args.output)
     dt = time.time() - t0
     size = os.path.getsize(args.output) / 1048576
