@@ -10,6 +10,14 @@ name: Build JetHan Mono
 #   - 推送 tag jethan-v* (如 jethan-v1.000) → 构建并自动创建 GitHub Release
 #   - 手动 workflow_dispatch, 默认 tag jethan-v1.000, 可自定义
 #     → 构建并创建 GitHub Release 附带字体文件
+#
+# 上游字体缓存:
+#   JetBrains Mono + Noto CJK 源字体 (~140MB) 存入 actions/cache;
+#   key 绑定下方 env 的上游版本号, 升级上游时改 env 即自动换 key 重新下载。
+
+env:
+  JB_VERSION: '2.304'   # JetBrains Mono 发布 tag (fetch_sources.sh 与 cache key 共用)
+  NOTO_TAG: 'Sans2.004' # notofonts/noto-cjk 发布 tag (Mono 随 Sans 分发)
 
 on:
   workflow_dispatch:
@@ -48,8 +56,31 @@ jobs:
       - name: 安装依赖 (fontTools + brotli + uharfbuzz)
         run: pip install fonttools brotli uharfbuzz
 
-      - name: 下载上游字体源 (JetBrains Mono v2.304 x8 字重 + Noto Sans Mono CJK SC x7 字重)
+      - name: 恢复上游字体缓存 (JetBrains Mono + Noto CJK, ~140MB)
+        id: font-cache
+        uses: actions/cache@v4
+        with:
+          path: font-build/downloads
+          # key 绑定上游版本号: 升级 env.JB_VERSION / env.NOTO_TAG 即自动失效重拉
+          key: jethan-upstream-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}
+
+      - name: 下载上游字体源 (仅缓存未命中时; 脚本幂等, 已存在文件自动跳过)
+        if: steps.font-cache.outputs.cache-hit != 'true'
         run: bash font-build/tools/fetch_sources.sh
+        env:
+          JB_VERSION: ${{ env.JB_VERSION }}
+          NOTO_TAG: ${{ env.NOTO_TAG }}
+
+      - name: 上游字体就位确认 (缓存或新下载, 缺文件则失败)
+        run: |
+          ls -la font-build/downloads/
+          for f in JetBrainsMono-{Thin,ExtraLight,Light,Regular,Medium,SemiBold,Bold,ExtraBold}.ttf \
+                   JetBrainsMono-OFL.txt \
+                   NotoSansMonoCJKsc-{Regular,Bold}.otf \
+                   NotoSansCJKsc-{Thin,DemiLight,Light,Regular,Medium,Bold,Black}.otf; do
+            test -s "font-build/downloads/$f" || { echo "MISSING: $f"; exit 1; }
+          done
+          echo "上游字体文件齐全 (18 项)"
 
       - name: 构建 (子集化 → CFF→TTF → CJK 1200u → 合并(Merger API) → 重命名 → woff2 → 校验)
         run: bash font-build/build.sh
