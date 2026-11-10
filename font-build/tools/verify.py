@@ -249,8 +249,12 @@ from rename import (  # noqa: E402
     compute_unicode_ranges,
 )
 
+# head.fontRevision 是 16.16 定点数 (步长 1/65536 ≈ 1.53e-5): 三位小数版本号
+# (如 1.001) 会被量化, 比较容差必须 ≥ 一个步长, 否则 1.000 之后所有版本必挂
+FIXED16_16_EPS = 2e-5
+
 check("H1 fontRevision == Version(nameID5)",
-      abs(mg["head"].fontRevision - float(VERSION)) < 1e-6,
+      abs(mg["head"].fontRevision - float(VERSION)) < FIXED16_16_EPS,
       f"fontRevision={mg['head'].fontRevision} vs 'Version {VERSION}'")
 check("H2 nameID5/3 carry VERSION",
       (mg_name.getDebugName(5) or "").startswith(f"Version {VERSION}")

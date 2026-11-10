@@ -68,8 +68,9 @@ def audit_font(path, prefix):
     hmtx = f["hmtx"]  # M11/M12 也要用, woff2 路径同样需要绑定
 
     # ---- M2 版本一致性 ----
+    # 容差 2e-5 ≥ 16.16 定点步长 1/65536 ≈ 1.53e-5: 三位小数版本号会被量化
     check(prefix, "M2 fontRevision == Version(nameID5)",
-          abs(head.fontRevision - float(VERSION)) < 1e-6,
+          abs(head.fontRevision - float(VERSION)) < 2e-5,
           f"fontRevision={head.fontRevision}")
     check(prefix, "M2b nameID5/3 携带 VERSION",
           (name.getDebugName(5) or "").startswith(f"Version {VERSION}")

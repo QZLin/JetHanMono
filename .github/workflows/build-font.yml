@@ -7,8 +7,8 @@ name: Build JetHan Mono
 #
 # 触发:
 #   - font-build/** 或本工作流变更推送至 main → 自动构建 + 上传产物
-#   - 推送 tag jethan-v* (如 jethan-v1.000) → 构建并自动创建 GitHub Release
-#   - 手动 workflow_dispatch, 默认 tag jethan-v1.000, 可自定义
+#   - 推送 tag jethan-v* (如 jethan-v1.001) → 构建并自动创建 GitHub Release
+#   - 手动 workflow_dispatch, 默认 tag jethan-v1.001, 可自定义
 #     → 构建并创建 GitHub Release 附带字体文件
 #
 # 上游字体缓存:
@@ -25,9 +25,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag 名（默认 jethan-v1.000，构建后自动发布）'
+        description: 'Release tag 名（默认 jethan-v1.001，构建后自动发布）'
         required: false
-        default: 'jethan-v1.000'
+        default: 'jethan-v1.001'
   push:
     branches: [main]
     tags: ['jethan-v*']
@@ -152,6 +152,8 @@ jobs:
             - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u）
             - 字重: Thin / ExtraLight / Light / Regular / Medium / SemiBold / Bold / ExtraBold 共 8 档
               （CJK 侧无 Heavy/ExtraLight, 按 usWeightClass 就近映射, 最重映射到 Noto Black）
+            - 元数据完整: fontRevision 与 nameID5 一致、固定发布日、厂商/设计者/许可/URL 齐全、
+              ulUnicodeRange 按合并后 cmap 重算（OS/2 vendID 'JHM '）
             - 许可: SIL OFL 1.1（思源保留字体名 'Source', 故本衍生字体另取名）
           files: dist/*
           fail_on_unmatched_files: true

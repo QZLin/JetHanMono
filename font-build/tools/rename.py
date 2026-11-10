@@ -65,16 +65,16 @@ sys.path.insert(0, HERE)
 from os2_ranges import OS2_RANGES  # noqa: E402  (generated, same dir)
 
 FAMILY = "JetHan Mono"
-VERSION = "1.000"
+VERSION = "1.001"   # 1.001: 补齐元数据 (fontRevision/日期/厂商/UnicodeRange)
 BUILDER = "fontbuild"
 
-# fontRevision/nameID 5 一致性 + 构建可复现: 固定为 1.000 版发布日.
+# fontRevision/nameID 5 一致性 + 构建可复现: 固定为当前版发布日.
 # (fontTools Merger 会把 fontRevision 取 max(2.304, 2.004); 而
 #  head.created/modified 除了被 Merger 写成构建时刻, TTFont.save 还会因
 #  recalcTimestamp=True 再次用当前时间覆盖 modified -- 所以除固定值外
 #  还必须关掉 recalcTimestamp, 见 rename_font 内)
 # fontTools 内部把这两个字段存为 Mac 纪元 (1904-01-01) 整秒
-RELEASE_DATE_STR = "2026-11-09 00:00:00"
+RELEASE_DATE_STR = "2026-11-10 00:00:00"
 RELEASE_DATE = int(
     (datetime.fromisoformat(RELEASE_DATE_STR) - datetime(1904, 1, 1)).total_seconds()
 )
