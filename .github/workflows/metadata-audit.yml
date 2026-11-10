@@ -1,0 +1,87 @@
+name: Metadata Audit
+
+# 字体元数据独立审计: 对 *实际分发* 的字体文件执行
+# font-build/tools/audit_metadata.py (M1-M15, 契约常量与 rename.py 同源),
+# 与构建期 verify.py 的 H 段互补 —— 那道关卡保护"刚构建的", 这道保护
+# "用户下载到的": 资产被误覆盖、覆盖不完整、或手动改过 Release 都会被抓出。
+#
+# 触发:
+#   - workflow_dispatch: 可指定 release_tag (空 = 最新发布版)
+#   - schedule: 每周一 03:23 UTC 审计最新 Release (漂移检测)
+#   - release: 发布/重发布事件自动审计刚分发的资产
+#
+# 审计对象: Release 的 JetHanMono-*.ttf / *.woff2 / OFL.txt
+# 结果: 任何 FAIL -> job 失败; 报告上传为 workflow artifact。
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '审计哪个 Release (空 = 最新发布版)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '23 3 * * 1'   # 每周一 03:23 UTC
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metadata-audit-${{ github.event.release.tag_name || github.event.inputs.release_tag || 'schedule' }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: 审计分发字体元数据
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安装依赖 (fontTools + brotli, woff2 解码需要)
+        run: pip install fonttools brotli
+
+      - name: 解析目标 Release tag
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+            echo "未指定 tag, 使用最新发布版: $TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: 下载 Release 资产 (ttf/woff2/OFL)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.target.outputs.tag }}" \
+            -R "$GITHUB_REPOSITORY" --dir dist \
+            --pattern 'JetHanMono-*.ttf' \
+            --pattern 'JetHanMono-*.woff2' \
+            --pattern 'JetHanMono-OFL.txt'
+          ls -la dist/
+
+      - name: 运行元数据审计 (M1-M15)
+        id: audit
+        run: |
+          python3 font-build/tools/audit_metadata.py dist \
+            --report metadata-audit-report.json
+
+      - name: 上传审计报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: metadata-audit-report
+          path: metadata-audit-report.json
+          if-no-files-found: ignore
