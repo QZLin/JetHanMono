@@ -11,11 +11,32 @@ This script REBUILDS the name table instead of patching a few IDs, so no
 leftover metadata from either upstream survives:
 
   - deleted leftovers: 7 (trademark - described JetBrains Mono, wrong font),
-    11/12 (vendor URL - JetBrains only), 250+ (JetBrains variable-font axis
+    12 (designer URL - JetBrains only), 250+ (JetBrains variable-font axis
     names like "Broken equals ligatures")
   - nameID 0/9/10 now credit BOTH upstream projects (OFL requires the
     copyright notices of the original fonts be preserved)
   - nameID 5 gets its own version, not JetBrains' 2.304
+
+Metadata completeness audit (why certain fields are (re)written here):
+  - fontTools Merger behavior that produced WRONG metadata in the merged
+    font: head.fontRevision = max(2.304, 2.004) -> contradicted nameID 5
+    "Version 1.000"; head.created/modified = current_time -> build date
+    instead of a meaningful, reproducible date.  Both are pinned here.
+  - nameID 11 (vendor URL) pointed to JetBrains only, so the merger's
+    value was wrong - but the DERIVATIVE has its own home, so instead of
+    leaving the field absent we now set it to the JetHan Mono repo
+    (nameID 8 manufacturer filled the same way; nameID 7 trademark and
+    12 designer URL stay intentionally absent: no reserved names may be
+    used, and the designers are already credited in nameID 9).
+  - OS/2.achVendID: Merger keeps the first font's 'JB' - a merged
+    derivative claiming JetBrains' vendor ID is misleading; set 'JHM '.
+  - OS/2 ulUnicodeRange1-4: Merger ORs the two sources' declarations,
+    but a mapping can exist in the merged cmap WITHOUT either source
+    declaring its bit (real case: bit34 U+20DD combining enclosing,
+    bit62 U+FB01 latin ligature - both from JetBrains cmap, neither
+    declared by JetBrains).  Bits are now RECOMPUTED from the merged
+    cmap using the authoritative OS/2 range table (os2_ranges.py,
+    generated from HarfBuzz) and OR'd in - never cleared.
 
 Multi-weight naming follows the Microsoft legacy family/subfamily model:
   - RIBBI styles (Regular/Bold):  nameID 1 = "JetHan Mono",
@@ -34,12 +55,34 @@ Usage: rename.py <font.ttf> [more.ttf ...]
 """
 import os
 import sys
+from bisect import bisect_right
+from datetime import datetime
+
 from fontTools.ttLib import TTFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from os2_ranges import OS2_RANGES  # noqa: E402  (generated, same dir)
+
 FAMILY = "JetHan Mono"
 VERSION = "1.000"
 BUILDER = "fontbuild"
+
+# fontRevision/nameID 5 一致性 + 构建可复现: 固定为 1.000 版发布日.
+# (fontTools Merger 会把 fontRevision 取 max(2.304, 2.004); 而
+#  head.created/modified 除了被 Merger 写成构建时刻, TTFont.save 还会因
+#  recalcTimestamp=True 再次用当前时间覆盖 modified -- 所以除固定值外
+#  还必须关掉 recalcTimestamp, 见 rename_font 内)
+# fontTools 内部把这两个字段存为 Mac 纪元 (1904-01-01) 整秒
+RELEASE_DATE_STR = "2026-11-09 00:00:00"
+RELEASE_DATE = int(
+    (datetime.fromisoformat(RELEASE_DATE_STR) - datetime(1904, 1, 1)).total_seconds()
+)
+
+# 厂商/元数据标识 (不再沿用 JetBrains 的 'JB')
+VEND_ID = "JHM "
+MANUFACTURER = "The JetHan Mono Project Authors"
+VENDOR_URL = "https://github.com/QZLin/JetHanMono"
 
 # usWeightClass -> subfamily/weight name (Microsoft + Google Fonts naming)
 WEIGHT_NAMES = {
@@ -87,8 +130,10 @@ DESCRIPTION = (
     "ink centered with symmetric side bearings."
 )
 
-# IDs we fully control (rebuilt from scratch below); 16/17 added per weight
-SET_IDS = (0, 1, 2, 3, 4, 5, 6, 9, 10, 13, 14, 16, 17)
+# IDs we fully control (rebuilt from scratch below); 8/11 vendor identity
+# + 16/17 typographic pair added per weight.  7 (trademark) and 12
+# (designer URL) stay absent ON PURPOSE (see module docstring).
+SET_IDS = (0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 13, 14, 16, 17)
 
 
 def set_name(font, nameID, value):
@@ -104,6 +149,40 @@ def set_name(font, nameID, value):
         name.setName(value, nameID, 1, 0, 0)  # Macintosh, Roman, English
 
 
+def compute_unicode_ranges(cmap):
+    """从 cmap 精确计算 ulUnicodeRange1-4 应置位 (权威位表 OS2_RANGES).
+
+    位表区间彼此重叠 (同一块可同时属于多个位), 所以先做一次扫线,
+    把所有区间切成互斥的基本区间并为每段预计算覆盖位掩码; 之后每个
+    码点一次 bisect 即得全部命中位 -- 精确且 O(n log n).
+    """
+    spans = sorted((s, e, b)
+                   for b, rs in OS2_RANGES.items() for s, e in rs)
+    bounds = sorted({x for s, _e, _b in spans for x in (s, _e + 1)}
+                    | {0x110000})
+    elem, estarts = [], []
+    for a, b in zip(bounds, bounds[1:]):
+        mask = 0
+        mid = (a + b) // 2
+        for s, e, bit in spans:
+            if s <= mid <= e:
+                mask |= 1 << bit
+        # mask=0 的基本区间必须保留: 否则落在"无覆盖间隙"里的码点会
+        # bisect 到上一个非空区间, 继承到错误的掩码 (假阳性)
+        elem.append(mask)
+        estarts.append(a)
+    r = [0, 0, 0, 0]
+    for cp in cmap:
+        i = bisect_right(estarts, cp) - 1
+        if i >= 0:
+            mask = elem[i]
+            r[0] |= mask & 0xFFFFFFFF
+            r[1] |= (mask >> 32) & 0xFFFFFFFF
+            r[2] |= (mask >> 64) & 0xFFFFFFFF
+            r[3] |= (mask >> 96) & 0xFFFFFFFF
+    return r
+
+
 def make_license_text():
     """Both upstream copyright headers + the standard OFL 1.1 body."""
     jb_path = os.path.join(HERE, "..", "downloads", "JetBrainsMono-OFL.txt")
@@ -116,6 +195,7 @@ def make_license_text():
         body = "\n".join(lines[start:]).strip()
     header = (
         "JetHan Mono\n"
+        "Copyright 2026 The JetHan Mono Project Authors (https://github.com/QZLin/JetHanMono)\n"
         "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)\n"
         "Copyright 2014-2021 Adobe (http://www.adobe.com/)\n"
         "\n"
@@ -127,7 +207,7 @@ def make_license_text():
 
 
 def rename_font(path):
-    f = TTFont(path)
+    f = TTFont(path, recalcTimestamp=False)  # 固定 modified, 不让 save 写入当前时间
     name = f["name"]
     weight = f["OS/2"].usWeightClass
     if weight not in WEIGHT_NAMES:
@@ -147,8 +227,10 @@ def rename_font(path):
     set_name(f, 4, full)                                    # full name
     set_name(f, 5, f"Version {VERSION};{BUILDER}")          # version (was JetBrains' 2.304)
     set_name(f, 6, ps)                                      # PostScript name
+    set_name(f, 8, MANUFACTURER)                            # manufacturer
     set_name(f, 9, DESIGNER)                                # designer
     set_name(f, 10, DESCRIPTION)                            # description
+    set_name(f, 11, VENDOR_URL)                             # vendor URL (本项目的家)
     set_name(f, 13, ("This Font Software is licensed under the SIL Open Font License, "
                      "Version 1.1. This license is available with a FAQ at: "
                      "https://scripts.sil.org/OFL"))
@@ -166,8 +248,8 @@ def rename_font(path):
         set_name(f, 16, FAMILY)            # typographic family
         set_name(f, 17, sub)               # typographic subfamily
 
-    # NOTE: nameID 7 (trademark), 11/12 (vendor) and 256+ (fvar axis labels)
-    # are intentionally absent.
+    # NOTE: nameID 7 (trademark), 12 (designer URL) and 256+ (fvar axis
+    # labels) are intentionally absent.
 
     # 3) fsSelection / macStyle: enforce RIBBI bits per weight so apps
     #    (Windows font picker, LibreOffice, macOS font book) classify right
@@ -186,6 +268,30 @@ def rename_font(path):
     if weight == 700:
         mac |= MAC_BOLD
     f["head"].macStyle = mac
+
+    # head.fontRevision 必须与 nameID 5 一致 (Merger 取 max(2.304, 2.004)
+    # -> 输出曾携带 JetBrains 的 2.304, 与 "Version 1.000" 自相矛盾)
+    f["head"].fontRevision = float(VERSION)
+
+    # created/modified: Merger 写入的是构建时刻 (且 TTFont.save 的
+    # recalcTimestamp 还会再次覆盖 modified), 既不可复现也误导;
+    # 固定为 1.000 版发布日, 使同输入的构建字节级可复现
+    f["head"].created = RELEASE_DATE
+    f["head"].modified = RELEASE_DATE
+
+    # OS/2.achVendID: Merger 保留首字体 (JetBrains 'JB'), 派生字体
+    # 声明自己的 vendor 标识
+    f["OS/2"].achVendID = VEND_ID
+
+    # ulUnicodeRange1-4: Merger 只对上游声明做按位或, 但存在 cmap 已有
+    # 映射而两家上游都没声明对应位的码点 (bit34 U+20DD / bit62 U+FB01).
+    # 从合并后 cmap 按权威位表重算, 与现有声明取或 -- 只增不清.
+    r = compute_unicode_ranges(f.getBestCmap().keys())
+    o2 = f["OS/2"]
+    o2.ulUnicodeRange1 |= r[0]
+    o2.ulUnicodeRange2 |= r[1]
+    o2.ulUnicodeRange3 |= r[2]
+    o2.ulUnicodeRange4 |= r[3]
 
     # metric fixup: CJK glyphs are 1200u wide; JetBrains' hhea.advanceWidthMax
     # was 600, which no longer describes the merged font
@@ -226,7 +332,10 @@ def rename_font(path):
           f"weightClass={weight} fsSelection={fs:#06x} macStyle={mac:#04x} "
           f"nameRecords={len(name.names)} advanceWidthMax={amax} "
           f"hheaAsc={f['hhea'].ascent} hheaDesc={f['hhea'].descent} "
-          f"winAsc={os2.usWinAscent} winDesc={os2.usWinDescent}")
+          f"winAsc={os2.usWinAscent} winDesc={os2.usWinDescent} "
+          f"fontRev={f['head'].fontRevision} vend={f['OS/2'].achVendID!r} "
+          f"ranges=({o2.ulUnicodeRange1:#x},{o2.ulUnicodeRange2:#x},"
+          f"{o2.ulUnicodeRange3:#x},{o2.ulUnicodeRange4:#x})")
 
 
 def main():

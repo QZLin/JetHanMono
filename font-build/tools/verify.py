@@ -238,6 +238,50 @@ fam = mg_name.getDebugName(16) or mg_name.getDebugName(1)
 check("G1 family name == 'JetHan Mono'", fam == "JetHan Mono", f"got {fam!r}")
 check("G2 PostScript name set", bool(mg_name.getDebugName(6)), mg_name.getDebugName(6))
 
+# ---------- H. metadata completeness (rename.py 契约) ----------
+# 只依赖合并字体自身; 确保改名步骤写入的元数据契约不回退.
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from os2_ranges import OS2_RANGES  # noqa: E402
+from rename import (  # noqa: E402
+    VERSION, MANUFACTURER, VENDOR_URL, VEND_ID, RELEASE_DATE,
+    compute_unicode_ranges,
+)
+
+check("H1 fontRevision == Version(nameID5)",
+      abs(mg["head"].fontRevision - float(VERSION)) < 1e-6,
+      f"fontRevision={mg['head'].fontRevision} vs 'Version {VERSION}'")
+check("H2 nameID5/3 carry VERSION",
+      (mg_name.getDebugName(5) or "").startswith(f"Version {VERSION}")
+      and f";{VERSION};" in (mg_name.getDebugName(3) or ""),
+      f"5={mg_name.getDebugName(5)!r} 3={mg_name.getDebugName(3)!r}")
+check("H3 manufacturer/vendor URL set",
+      mg_name.getDebugName(8) == MANUFACTURER
+      and mg_name.getDebugName(11) == VENDOR_URL,
+      f"8={mg_name.getDebugName(8)!r} 11={mg_name.getDebugName(11)!r}")
+_have_ids = {r.nameID for r in mg_name.names}
+check("H4 no trademark/designer-URL/axis-name leftovers",
+      7 not in _have_ids and 12 not in _have_ids
+      and not any(i >= 250 for i in _have_ids),
+      f"ids>=250: {sorted(i for i in _have_ids if i >= 250)}")
+_declared = [mg["OS/2"].ulUnicodeRange1, mg["OS/2"].ulUnicodeRange2,
+             mg["OS/2"].ulUnicodeRange3, mg["OS/2"].ulUnicodeRange4]
+_computed = compute_unicode_ranges(mg.getBestCmap().keys())
+_missing = [d & ~c for d, c in zip(_computed, _declared)]
+check("H5 ulUnicodeRange covers every mapped block",
+      not any(_missing),
+      f"missing bits: {[hex(x) for x in _missing if x]}")
+check("H6 created/modified pinned (reproducible builds)",
+      mg["head"].created == mg["head"].modified == RELEASE_DATE,
+      f"created={mg['head'].created} modified={mg['head'].modified} "
+      f"expected={RELEASE_DATE}")
+check("H7 achVendID == JetHan Mono's own",
+      mg["OS/2"].achVendID == VEND_ID, f"got {mg['OS/2'].achVendID!r}")
+check("H8 USE_TYPO_METRICS bit kept",
+      bool(mg["OS/2"].fsSelection & 0x80),
+      f"fsSelection={mg['OS/2'].fsSelection:#06x}")
+
 # ---------- summary ----------
 total = len(mg.getGlyphOrder())
 import os
