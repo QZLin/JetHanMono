@@ -65,6 +65,7 @@ def audit_font(path, prefix):
     name = f["name"]
     ids = {r.nameID for r in name.names}
     head, os2, post, hhea = f["head"], f["OS/2"], f["post"], f["hhea"]
+    hmtx = f["hmtx"]  # M11/M12 也要用, woff2 路径同样需要绑定
 
     # ---- M2 版本一致性 ----
     check(prefix, "M2 fontRevision == Version(nameID5)",
@@ -134,7 +135,7 @@ def audit_font(path, prefix):
     check(prefix, "M8 ulUnicodeRange ⊇ cmap 实际覆盖",
           not any(miss), f"缺位={[hex(x) for x in miss if x]}")
 
-    # ---- M9 cmap 子表 + 2:1 网格 (woff2 也查, brotli 已装) ----
+    # ---- M9 cmap 子表 + 2:1 网格 (仅 ttf; woff2 的字形覆盖由 M14 与 ttf 比对背书) ----
     if not is_woff2:
         subs = {(t.format, t.platformID, t.platEncID) for t in f["cmap"].tables}
         cmap = f.getBestCmap()
