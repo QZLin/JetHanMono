@@ -9,7 +9,9 @@ name: Build JetHan Mono
 #   - font-build/** 或本工作流变更推送至 main → 自动构建 + 上传产物
 #   - 推送 tag jethan-v* (如 jethan-v1.001) → 构建并自动创建 GitHub Release
 #   - 手动 workflow_dispatch, 默认 tag jethan-v1.001, 可自定义
-#     → 构建并创建 GitHub Release 附带字体文件
+#     → 构建并创建 GitHub Release 附带字体文件:
+#       散装 8 字重 ttf/woff2 + OFL, 另打 JetHanMono-<版本>-ttf.zip /
+#       JetHanMono-<版本>-woff2.zip 两个压缩包 (各附 OFL, 版本号取自 tag)
 #
 # 上游字体缓存:
 #   JetBrains Mono + Noto CJK 源字体 (~140MB) 存入 actions/cache;
@@ -139,6 +141,20 @@ jobs:
           name: JetHanMono-fonts
           path: dist
 
+      - name: 打包 ttf / woff2 两个压缩包 (各附 OFL, 文件名带版本号)
+        env:
+          TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#jethan-v}"   # jethan-v1.001 -> 1.001; 前缀不符时原样保留
+          mkdir ttf woff2
+          cp dist/JetHanMono-*.ttf dist/JetHanMono-OFL.txt ttf/
+          cp dist/JetHanMono-*.woff2 dist/JetHanMono-OFL.txt woff2/
+          # -j 压平目录: 解压即得字体文件, 可直接拖入字体查看器/控制面板安装
+          zip -j "dist/JetHanMono-${VERSION}-ttf.zip" ttf/*
+          zip -j "dist/JetHanMono-${VERSION}-woff2.zip" woff2/*
+          echo "== Release 资产清单 ($VERSION) =="
+          ls -la dist/
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v3
         with:
@@ -155,5 +171,8 @@ jobs:
             - 元数据完整: fontRevision 与 nameID5 一致、固定发布日、厂商/设计者/许可/URL 齐全、
               ulUnicodeRange 按合并后 cmap 重算（OS/2 vendID 'JHM '）
             - 许可: SIL OFL 1.1（思源保留字体名 'Source', 故本衍生字体另取名）
+            附件说明: 散装 8 字重 ttf / woff2 + OFL 之外, 另附两个打包——
+            JetHanMono-<版本>-ttf.zip 与 JetHanMono-<版本>-woff2.zip,
+            各含对应格式全部 8 字重 + OFL 许可证, 解压即用。
           files: dist/*
           fail_on_unmatched_files: true
