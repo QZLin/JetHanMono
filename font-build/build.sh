@@ -237,63 +237,6 @@ map_run() { # map_run <fn> <item...>
   return "$POOL_FAIL"
 }
 
-# ---- CJK 预处理分组 (去重; 分组结果本身也带指纹缓存) ----
-GROUPS_TSV="converted/.groups.tsv"
-GROUPS_DH="converted/.dh-groups"
-declare -A GID_OF=() NK_OF=() REP_OF=()
-GIDS=()
-
-declare -a PAIR_ARGS=()
-for i in "${!JB_WEIGHTS[@]}"; do
-  PAIR_ARGS+=("downloads/JetBrainsMono-${JB_WEIGHTS[$i]}.ttf" "downloads/${NK_WEIGHTS[$i]}.otf")
-done
-
-if STEP_UP2DATE "$GROUPS_TSV" "$GROUPS_DH" "${PAIR_ARGS[@]}" "tools/cjk_dedup.py"; then
-  echo "CJK 预处理分组: 命中缓存 ($GROUPS_TSV)"
-else
-  echo "CJK 预处理分组: 计算 (cmap 差集 + CJK 源字节指纹)..."
-  "$PYTHON_BIN" tools/cjk_dedup.py "${PAIR_ARGS[@]}" > "$GROUPS_TSV.tmp"
-  mv -f "$GROUPS_TSV.tmp" "$GROUPS_TSV"
-  STEP_MARK "$GROUPS_DH" "${PAIR_ARGS[@]}" "tools/cjk_dedup.py"
-fi
-GROUP_N=0
-while IFS=$'\t' read -r W gid nk; do
-  if [ -n "${W:-}" ]; then
-    GID_OF["$W"]="$gid"
-    NK_OF["$gid"]="${nk%.*}"   # 去掉 .otf 扩展名, 与 NK_WEIGHTS 的基名约定一致
-    if [ -z "${REP_OF[$gid]-}" ]; then REP_OF["$gid"]="$W"; GIDS+=("$gid"); GROUP_N=$((GROUP_N + 1)); fi
-  fi
-done < "$GROUPS_TSV"
-echo "预处理任务: ${#JB_WEIGHTS[@]} 字重 -> ${GROUP_N} 组"
-for gid in "${GIDS[@]}"; do
-  echo "  [组] $gid  (代表字重: ${REP_OF[$gid]})"
-done
-
-T_TOTAL0=$(date +%s)
-
-# ---------- --verify-only: 只跑第 6 阶段 (CI test job 用) ----------
-if [ "$VERIFY_ONLY" = "1" ]; then
-  echo ""
-  echo "== --verify-only: 只跑校验 (要求 downloads/ + converted CJK 分组产物 + output/ 已就位) =="
-  _missing=0
-  for W in "${JB_WEIGHTS[@]}"; do
-    gid="${GID_OF[$W]}"
-    for f in "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "output/JetHanMono-$W.ttf"; do
-      if [ ! -s "$f" ]; then echo "MISSING: $f"; _missing=1; fi
-    done
-  done
-  if [ "$_missing" -ne 0 ]; then
-    echo "缺少输入文件: 请先完整构建 (CI 中确认两个 artifact 均已下载到位)" >&2
-    exit 1
-  fi
-  s0=$(date +%s)
-  map_run stage_verify "${JB_WEIGHTS[@]}"
-  echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
-  print_summary
-  echo "完成 (verify-only)! 总耗时 $(fmt_dur "$(( $(date +%s) - T_TOTAL0 ))")"
-  exit 0
-fi
-
 # ---------- 阶段 1/6: CJK 子集化 (按 gid 去重) ----------
 stage_subset() {
   # 注意: local 的多个赋值参数在部分 bash 构建中是"先整体展开再赋值",
@@ -414,6 +357,64 @@ stage_verify() {
     "tools/invariant_test.py"
   report_time verify "$W" "$(( $(date +%s) - t0 ))"
 }
+
+# ---- CJK 预处理分组 (去重; 分组结果本身也带指纹缓存) ----
+GROUPS_TSV="converted/.groups.tsv"
+GROUPS_DH="converted/.dh-groups"
+declare -A GID_OF=() NK_OF=() REP_OF=()
+GIDS=()
+
+declare -a PAIR_ARGS=()
+for i in "${!JB_WEIGHTS[@]}"; do
+  PAIR_ARGS+=("downloads/JetBrainsMono-${JB_WEIGHTS[$i]}.ttf" "downloads/${NK_WEIGHTS[$i]}.otf")
+done
+
+if STEP_UP2DATE "$GROUPS_TSV" "$GROUPS_DH" "${PAIR_ARGS[@]}" "tools/cjk_dedup.py"; then
+  echo "CJK 预处理分组: 命中缓存 ($GROUPS_TSV)"
+else
+  echo "CJK 预处理分组: 计算 (cmap 差集 + CJK 源字节指纹)..."
+  "$PYTHON_BIN" tools/cjk_dedup.py "${PAIR_ARGS[@]}" > "$GROUPS_TSV.tmp"
+  mv -f "$GROUPS_TSV.tmp" "$GROUPS_TSV"
+  STEP_MARK "$GROUPS_DH" "${PAIR_ARGS[@]}" "tools/cjk_dedup.py"
+fi
+GROUP_N=0
+while IFS=$'\t' read -r W gid nk; do
+  if [ -n "${W:-}" ]; then
+    GID_OF["$W"]="$gid"
+    NK_OF["$gid"]="${nk%.*}"   # 去掉 .otf 扩展名, 与 NK_WEIGHTS 的基名约定一致
+    if [ -z "${REP_OF[$gid]-}" ]; then REP_OF["$gid"]="$W"; GIDS+=("$gid"); GROUP_N=$((GROUP_N + 1)); fi
+  fi
+done < "$GROUPS_TSV"
+echo "预处理任务: ${#JB_WEIGHTS[@]} 字重 -> ${GROUP_N} 组"
+for gid in "${GIDS[@]}"; do
+  echo "  [组] $gid  (代表字重: ${REP_OF[$gid]})"
+done
+
+T_TOTAL0=$(date +%s)
+
+# ---------- --verify-only: 只跑第 6 阶段 (CI test job 用) ----------
+if [ "$VERIFY_ONLY" = "1" ]; then
+  echo ""
+  echo "== --verify-only: 只跑校验 (要求 downloads/ + converted CJK 分组产物 + output/ 已就位) =="
+  _missing=0
+  for W in "${JB_WEIGHTS[@]}"; do
+    gid="${GID_OF[$W]}"
+    for f in "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "output/JetHanMono-$W.ttf"; do
+      if [ ! -s "$f" ]; then echo "MISSING: $f"; _missing=1; fi
+    done
+  done
+  if [ "$_missing" -ne 0 ]; then
+    echo "缺少输入文件: 请先完整构建 (CI 中确认两个 artifact 均已下载到位)" >&2
+    exit 1
+  fi
+  s0=$(date +%s)
+  map_run stage_verify "${JB_WEIGHTS[@]}"
+  echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
+  print_summary
+  echo "完成 (verify-only)! 总耗时 $(fmt_dur "$(( $(date +%s) - T_TOTAL0 ))")"
+  exit 0
+fi
+
 
 echo ""
 echo "== 1/6 子集化 CJK (仅保留 JetBrains 未覆盖的码位; 按 gid 去重) =="
