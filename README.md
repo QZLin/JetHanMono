@@ -29,12 +29,22 @@ JetBrains Mono（拉丁 / 代码 / 编程连字）与思源等宽（Noto Sans Mo
 pip install fonttools brotli uharfbuzz
 bash font-build/tools/fetch_sources.sh   # 下载上游源字体（3 个包，解压后约 145MB）
 cd font-build
-bash build.sh                            # 全部 8 档字重
+bash build.sh                            # 全部 8 档字重（默认串行）
 bash build.sh Medium Bold                # 增量构建指定字重
+JOBS=4 bash build.sh                     # 每阶段最多 4 任务并行（阶段间保持屏障）
+SKIP_WOFF2=1 bash build.sh               # 日常调试：只出 TTF
+bash build.sh --verify-only              # 只跑校验阶段（CI 的 test job 即此模式）
 ```
 
 产物：`font-build/output/JetHanMono-<Weight>.ttf/.woff2` ×8 + `JetHanMono-OFL.txt`。
-构建末尾自动运行 `tools/verify.py` 校验（含区块级宽度不变量：宽格 1200 / 半角 600）与 `tools/shape_test.py` 连字/中文塑形冒烟测试。
+构建末尾自动运行 `tools/verify.py` 校验（含区块级宽度不变量：宽格 1200 / 半角 600）与 `tools/shape_test.py` 连字/中文塑形冒烟测试；`SKIP_VERIFY=1` 可跳过（CI 中校验独立成 test job）。
+
+### 构建效率设计（v3）
+
+- **步骤级指纹增量**：每步把输入联合 SHA-256 写入标记文件，输入未变直接跳过；单次构建内文件哈希按（路径+size+mtime）缓存复用，命中缓存时不再对被多字重共享的 Noto 源反复算哈希。
+- **CJK 预处理去重**：子集化/转换/吸附的产物只取决于（CJK 源字体, 保留码位集 = cjk_cmap − jb_cmap）。ExtraLight/Light、SemiBold/Bold 共用 CJK 源，且各字重 JBM 字符集一致 → 预处理任务 8 份并为 6 份（`tools/cjk_dedup.py` 按 cmap 实际差集分组，不做任何"各字重 cmap 相同"的假设）。拼合及之后仍按字重独立。
+- **阶段内并行**：`JOBS=N` 控制每阶段并发任务数（阶段之间保持屏障；任一任务失败立即停止派发、回放失败日志并报出失败字重）。并行池为 POSIX 轮询实现，Git Bash 兼容。
+- **阶段耗时统计**：每个任务与每阶段的累计耗时、构建总耗时打印在输出中，用于定位瓶颈再决定下一步优化（如 cu2qu 转换精度实验，属高风险项未默认启用）。
 
 ## 管线（六步）
 
@@ -50,11 +60,12 @@ bash build.sh Medium Bold                # 增量构建指定字重
 
 ```
 font-build/
-├── build.sh            # 一键构建（8 档字重；Windows Git Bash 兼容，CRLF 自愈）
-├── tools/              # 12 个工具脚本（源下载 / 六步管线 / 校验）
+├── build.sh            # 一键构建（并行/去重/指纹增量；Windows Git Bash 兼容，CRLF 自愈）
+├── tools/              # 13 个工具脚本（源下载 / 分组去重 / 六步管线 / 校验）
 ├── downloads/          # 上游源字体（fetch_sources.sh 生成，不入库）
 └── output/             # 构建产物
-.github/workflows/      # GitHub Actions：push 自动构建，artifact + 可选 release
+.github/workflows/      # GitHub Actions：build / test / release 三 job，
+                        # 测试为发布质量门槛（dispatch 可选跑、默认勾选）
 src/app/                # 字体预览 / 下载页（Next.js，含 2:1 对齐演示）
 ```
 

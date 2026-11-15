@@ -6,12 +6,20 @@ name: Build JetHan Mono
 # 但 'JetBrains' 为注册商标, 故衍生字体定名 JetHan Mono（中性新名, 合规）。
 #
 # 触发:
-#   - font-build/** 或本工作流变更推送至 main → 自动构建 + 上传产物
-#   - 推送 tag jethan-v* (如 jethan-v1.002) → 构建并自动创建 GitHub Release
-#   - 手动 workflow_dispatch, 默认 tag jethan-v1.002, 可自定义
-#     → 构建并创建 GitHub Release 附带字体文件:
-#       散装 8 字重 ttf/woff2 + OFL, 另打 JetHanMono-<版本>-ttf.zip /
-#       JetHanMono-<版本>-woff2.zip 两个压缩包 (各附 OFL, 版本号取自 tag)
+#   - font-build/** 或本工作流变更推送至 main → build + test 两个 job
+#   - 推送 tag jethan-v* (如 jethan-v1.002) → build + test + 自动创建 GitHub Release
+#     (test 是发布质量门槛: 测试不通过或被跳过则不发布)
+#   - 手动 workflow_dispatch:
+#       release_tag: 留空 = 仅构建+测试, 不发布; 填 jethan-vX.YZZ = 通过后发布
+#       run_tests:   是否运行测试 job (默认勾选; 取消勾选则本次不会发布)
+#
+# job 结构:
+#   build   分组去重(8字重→6组) → 子集化 → CFF转TTF → 步进吸附 → 拼合
+#           → 改名+woff2 (SKIP_VERIFY=1, JOBS 阶段内并行, 校验拆至 test)
+#   test    verify.py 静态度量 + shape_test.py HarfBuzz 塑形, 8 字重
+#           (--verify-only 模式: 下载 build 产物 + 上游缓存作对比基准)
+#   release 打包 JetHanMono-<版本>-ttf/woff2.zip 并发布
+#           (散装 8 字重 ttf/woff2 + OFL + 两个压缩包, 版本号取自 tag)
 #
 # 上游字体缓存:
 #   JetBrains Mono + Noto CJK 源字体 (~140MB) 存入 actions/cache;
@@ -22,14 +30,20 @@ name: Build JetHan Mono
 env:
   JB_VERSION: '2.304'   # JetBrains Mono 发布 tag (fetch_sources.sh 与 cache key 共用)
   NOTO_TAG: 'Sans2.004' # notofonts/noto-cjk 发布 tag (Mono 随 Sans 分发)
+  JOBS: '2'             # build.sh 每阶段并行任务数 (runner 4 vCPU/16GB;
+                        # 首次全量构建实测内存峰值后可上调至 3)
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag 名（默认 jethan-v1.002，构建后自动发布）'
+        description: 'Release tag 名（留空 = 仅构建+测试, 不发布）'
         required: false
-        default: 'jethan-v1.002'
+        default: ''
+      run_tests:
+        description: '运行测试 job（取消勾选则本次不会发布 Release）'
+        type: boolean
+        default: true
   push:
     branches: [main]
     tags: ['jethan-v*']
@@ -46,7 +60,7 @@ concurrency:
 
 jobs:
   build:
-    name: 子集化 → CFF转TTF → 合并 → 校验 (8 字重)
+    name: 构建 (去重分组 → 阶段内并行六步, 8 字重)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -97,13 +111,15 @@ jobs:
           # 精确 key 绑定脚本内容: 任一管线脚本改动 -> miss;
           # restore-keys 前缀兜底恢复最近一份旧产物, build.sh 内部再按
           # 每步的输入 sha256 指纹决定跳过/重跑 —— 改 rename.py 不会
-          # 重跑子集化/转换/拉宽/拼合, 只有受影响的步骤真正执行。
-          key: jethan-mid-v2-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-${{ hashFiles('font-build/build.sh', 'font-build/tools/*.py') }}
+          # 重跑子集化/转换/吸附/拼合, 只有受影响的步骤真正执行。
+          key: jethan-mid-v3-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-${{ hashFiles('font-build/build.sh', 'font-build/tools/*.py') }}
           restore-keys: |
-            jethan-mid-v2-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-
+            jethan-mid-v3-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-
 
-      - name: 构建 (子集化 → CFF→TTF → CJK 1200u → 合并(Merger API) → 重命名 → woff2 → 校验; 步骤级增量)
+      - name: 构建 (JOBS 阶段内并行 + CJK 预处理去重; 校验拆至 test job)
         run: bash font-build/build.sh
+        env:
+          SKIP_VERIFY: '1'
 
       - name: 产物完整性检查 (8 字重 x ttf+woff2 + OFL)
         run: |
@@ -124,12 +140,84 @@ jobs:
             font-build/output/JetHanMono-OFL.txt
           if-no-files-found: error
 
+      - name: 上传 CJK 中间产物 (test job 的 verify 对比基准)
+        uses: actions/upload-artifact@v7
+        with:
+          name: JetHanMono-cjk-converted
+          path: |
+            font-build/converted/CJK-*.ttf
+            !font-build/converted/CJK-*.pre.ttf
+          if-no-files-found: error
+
+      - name: 上传构建日志 (失败时便于定位)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-logs
+          path: font-build/.build-logs/
+          if-no-files-found: ignore
+
+  test:
+    name: 校验 (verify + HarfBuzz shaping, 8 字重)
+    needs: build
+    # push / tag 必跑 (发布质量门槛); 手动 dispatch 可取消勾选 (但取消则不发布)
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安装依赖 (fontTools + brotli + uharfbuzz)
+        run: pip install fonttools brotli uharfbuzz
+
+      - name: 恢复上游字体缓存 (verify/shape_test 的对比基准)
+        id: font-cache
+        uses: actions/cache@v6
+        with:
+          path: font-build/downloads
+          key: jethan-upstream-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}
+
+      - name: 下载上游字体源 (仅缓存未命中时)
+        if: steps.font-cache.outputs.cache-hit != 'true'
+        run: bash font-build/tools/fetch_sources.sh
+        env:
+          JB_VERSION: ${{ env.JB_VERSION }}
+          NOTO_TAG: ${{ env.NOTO_TAG }}
+
+      - name: 下载构建产物 (output/)
+        uses: actions/download-artifact@v8
+        with:
+          name: JetHanMono-fonts
+          path: font-build/output
+
+      - name: 下载 CJK 中间产物 (converted/ 下的分组产物)
+        uses: actions/download-artifact@v8
+        with:
+          name: JetHanMono-cjk-converted
+          path: font-build/converted
+
+      - name: 校验 (verify-only 模式, 8 字重)
+        run: bash font-build/build.sh --verify-only
+
+      - name: 上传校验日志 (失败时便于定位)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs
+          path: font-build/.build-logs/
+          if-no-files-found: ignore
+
   release:
     name: 发布 GitHub Release
     if: >-
       (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
       || startsWith(github.ref, 'refs/tags/jethan-v')
-    needs: build
+    needs: [build, test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -145,7 +233,7 @@ jobs:
         env:
           TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
         run: |
-          VERSION="${TAG#jethan-v}"   # jethan-v1.001 -> 1.001; 前缀不符时原样保留
+          VERSION="${TAG#jethan-v}"   # jethan-v1.002 -> 1.002; 前缀不符时原样保留
           mkdir ttf woff2
           cp dist/JetHanMono-*.ttf dist/JetHanMono-OFL.txt ttf/
           cp dist/JetHanMono-*.woff2 dist/JetHanMono-OFL.txt woff2/

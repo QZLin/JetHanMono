@@ -8,9 +8,12 @@ After this step the subset has ~44k glyphs, leaving headroom for the merge.
 Usage: subset_cjk.py <jetbrains.ttf> <cjk.otf> <out.otf>
 """
 import sys
+import time
+
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
+t0 = time.time()
 jb_path, cjk_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
 jb_cps = set(TTFont(jb_path).getBestCmap().keys())
@@ -42,4 +45,5 @@ cmap.tables = [t for t in cmap.tables if t.format != 14]
 
 cjk.save(out_path)
 left = TTFont(out_path)
-print(f"saved {out_path}: glyphs={left['maxp'].numGlyphs} cmap={len(left.getBestCmap())}")
+print(f"saved {out_path}: glyphs={left['maxp'].numGlyphs} "
+      f"cmap={len(left.getBestCmap())} in {time.time() - t0:.1f}s")

@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 
 from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools import configLogger
@@ -119,6 +120,7 @@ def main(args=None):
                 overWrite=options.overwrite,
             )
 
+        t0 = time.time()
         font = TTFont(path, fontNumber=options.face_index)
         otf_to_ttf(
             font,
@@ -127,6 +129,8 @@ def main(args=None):
             reverse_direction=options.reverse_direction,
         )
         font.save(output)
+        print(f"otf2ttf: {os.path.basename(path)} -> {output}: "
+              f"glyphs={font['maxp'].numGlyphs} in {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":

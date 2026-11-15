@@ -57,30 +57,41 @@ def main():
     from fontTools.merge import Merger
     from fontTools.ttLib import TTFont
 
-    # strip layout tables from every non-primary source BEFORE merging
+    t_total = time.time()
+    # strip layout tables from every non-primary source BEFORE merging.
+    # 无表可删时直接复用原文件: 子集化阶段已移除 GSUB/GPOS/GDEF 等,
+    # 此时再做一次整字体反序列化+重编译+落盘纯属浪费 (v3 优化)。
     merge_paths = []
+    prep_dt = 0.0
     for i, p in enumerate(args.fonts):
         if i == 0:
             merge_paths.append(p)
             continue
+        t0 = time.time()
         f = TTFont(p)
         dropped = [t for t in STRIP_TAGS if t in f]
-        for t in dropped:
-            del f[t]
         if dropped:
+            for t in dropped:
+                del f[t]
             print(f"stripped layout tables from source {i} ({p.split('/')[-1]}): "
                   f"{','.join(dropped)}")
-        sp = p[:-4] + ".nolayout.ttf" if p.endswith(".ttf") else p + ".nolayout.ttf"
-        f.save(sp)
-        merge_paths.append(sp)
+            sp = p[:-4] + ".nolayout.ttf" if p.endswith(".ttf") else p + ".nolayout.ttf"
+            f.save(sp)
+            merge_paths.append(sp)
+        else:
+            print(f"source {i} ({p.split('/')[-1]}): no layout tables to strip, using as-is")
+            merge_paths.append(p)
+        prep_dt += time.time() - t0
 
     t0 = time.time()
     merged = Merger().merge(merge_paths)
     merged.save(args.output)
-    dt = time.time() - t0
+    merge_dt = time.time() - t0
     size = os.path.getsize(args.output) / 1048576
     print(f"merged {len(args.fonts)} fonts -> {args.output}: "
-          f"glyphs={merged['maxp'].numGlyphs} size={size:.1f}MB in {dt:.1f}s")
+          f"glyphs={merged['maxp'].numGlyphs} size={size:.1f}MB "
+          f"prep={prep_dt:.1f}s merge+save={merge_dt:.1f}s "
+          f"total={time.time() - t_total:.1f}s")
 
 
 if __name__ == "__main__":
