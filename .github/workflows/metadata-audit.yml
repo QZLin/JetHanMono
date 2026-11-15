@@ -89,9 +89,13 @@ jobs:
             d="unpacked/$name"
             mkdir -p "$d"
             unzip -q "$z" -d "$d"
+            # OFL 兼容两种布局: 包根级 (1.003+) 或 ttf/ 目录内
+            ofl="$d/JetHanMono-OFL.txt"
+            test -s "$ofl" || ofl="$d/ttf/JetHanMono-OFL.txt"
+            test -s "$ofl" || { echo "ERROR: $name 内未找到 OFL.txt" >&2; exit 1; }
             echo "== 审计 $name (ttf + woff2 + OFL) =="
             python3 font-build/tools/audit_metadata.py \
-              "$d/ttf" "$d/woff2" "$d/JetHanMono-OFL.txt" \
+              "$d/ttf" "$d/woff2" "$ofl" \
               --report "metadata-audit-report-${name}.json"
           done
 

@@ -247,6 +247,9 @@ jobs:
             mkdir -p "pkg/$V/ttf" "pkg/$V/woff2"
             cp dist/$V/JetHanMono-*.ttf dist/$V/JetHanMono-OFL.txt "pkg/$V/ttf/"
             cp dist/$V/JetHanMono-*.woff2 dist/$V/JetHanMono-OFL.txt "pkg/$V/woff2/"
+            # 根级 OFL (zip -r 对不存在的名字只警告不报错, 这里显式确保存在)
+            cp dist/$V/JetHanMono-OFL.txt "pkg/$V/JetHanMono-OFL.txt"
+            test -s "pkg/$V/JetHanMono-OFL.txt"
             ( cd "pkg/$V" && zip -r "$OLDPWD/dist/JetHanMono-${VERSION}-${VCAP}.zip" \
                 ttf woff2 JetHanMono-OFL.txt )
           done
