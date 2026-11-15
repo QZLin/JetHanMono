@@ -65,7 +65,7 @@ sys.path.insert(0, HERE)
 from os2_ranges import OS2_RANGES  # noqa: E402  (generated, same dir)
 
 FAMILY = "JetHan Mono"
-VERSION = "1.001"   # 1.001: 补齐元数据 (fontRevision/日期/厂商/UnicodeRange)
+VERSION = "1.002"   # 1.002: v3 几何定版 (CJK 不缩放+水平居中, 回退 v2 x1.2); 1.001: 补齐元数据
 BUILDER = "fontbuild"
 
 # fontRevision/nameID 5 一致性 + 构建可复现: 固定为当前版发布日.

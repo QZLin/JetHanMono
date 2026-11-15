@@ -7,8 +7,8 @@ name: Build JetHan Mono
 #
 # 触发:
 #   - font-build/** 或本工作流变更推送至 main → 自动构建 + 上传产物
-#   - 推送 tag jethan-v* (如 jethan-v1.001) → 构建并自动创建 GitHub Release
-#   - 手动 workflow_dispatch, 默认 tag jethan-v1.001, 可自定义
+#   - 推送 tag jethan-v* (如 jethan-v1.002) → 构建并自动创建 GitHub Release
+#   - 手动 workflow_dispatch, 默认 tag jethan-v1.002, 可自定义
 #     → 构建并创建 GitHub Release 附带字体文件:
 #       散装 8 字重 ttf/woff2 + OFL, 另打 JetHanMono-<版本>-ttf.zip /
 #       JetHanMono-<版本>-woff2.zip 两个压缩包 (各附 OFL, 版本号取自 tag)
@@ -27,9 +27,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag 名（默认 jethan-v1.001，构建后自动发布）'
+        description: 'Release tag 名（默认 jethan-v1.002，构建后自动发布）'
         required: false
-        default: 'jethan-v1.001'
+        default: 'jethan-v1.002'
   push:
     branches: [main]
     tags: ['jethan-v*']
