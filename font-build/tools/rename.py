@@ -65,7 +65,8 @@ sys.path.insert(0, HERE)
 from os2_ranges import OS2_RANGES  # noqa: E402  (generated, same dir)
 
 FAMILY = "JetHan Mono"
-VERSION = "1.002"   # 1.002: v3 几何定版 (CJK 不缩放+水平居中, 回退 v2 x1.2); 1.001: 补齐元数据
+VERSION = "1.003"   # 1.003: 居中/缩放双变体分包发布 (字体内名不变); 1.002: v3 几何定版
+                    # (CJK 不缩放+水平居中, 回退 v2 x1.2); 1.001: 补齐元数据
 BUILDER = "fontbuild"
 
 # fontRevision/nameID 5 一致性 + 构建可复现: 固定为当前版发布日.
@@ -74,7 +75,7 @@ BUILDER = "fontbuild"
 #  recalcTimestamp=True 再次用当前时间覆盖 modified -- 所以除固定值外
 #  还必须关掉 recalcTimestamp, 见 rename_font 内)
 # fontTools 内部把这两个字段存为 Mac 纪元 (1904-01-01) 整秒
-RELEASE_DATE_STR = "2026-11-10 00:00:00"
+RELEASE_DATE_STR = "2026-11-15 00:00:00"
 RELEASE_DATE = int(
     (datetime.fromisoformat(RELEASE_DATE_STR) - datetime(1904, 1, 1)).total_seconds()
 )

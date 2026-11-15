@@ -14,13 +14,16 @@ name: Build JetHan Mono
 #       run_tests:   是否运行测试 job (默认勾选; 取消勾选则本次不会发布)
 #
 # job 结构:
-#   build   分组去重(8字重→6组) → 子集化 → CFF转TTF → 步进吸附 → 拼合
+#   build   分组去重(8字重→6组) → 子集化 → CFF转TTF (共享层, 只跑一次)
+#           → 按变体循环 [步进吸附 → 拼合] (centered=不缩放居中 / scaled=x1.2满格)
 #           → 改名+woff2 (SKIP_VERIFY=1, JOBS 阶段内并行, 校验拆至 test)
 #   test    verify.py 静态度量 + invariant_test.py 全字形 JBM 保真
-#           + shape_test.py HarfBuzz 塑形, 8 字重
+#           + shape_test.py HarfBuzz 塑形, 双变体 x 8 字重
 #           (--verify-only 模式: 下载 build 产物 + 上游缓存作对比基准)
-#   release 打包 JetHanMono-<版本>-ttf/woff2.zip 并发布
-#           (散装 8 字重 ttf/woff2 + OFL + 两个压缩包, 版本号取自 tag)
+#   release 打包两套方案压缩包并发布:
+#           JetHanMono-<版本>-Centered.zip / -Scaled.zip,
+#           各含 ttf/ + woff2/ (8 字重) + OFL; 字体内名两套完全一致,
+#           散装字体资产不再单独发布 (同名会冲突, 压缩包即“两套字体”)
 #
 # 上游字体缓存:
 #   JetBrains Mono + Noto CJK 源字体 (~140MB) 存入 actions/cache;
@@ -61,7 +64,7 @@ concurrency:
 
 jobs:
   build:
-    name: 构建 (去重分组 → 阶段内并行六步, 8 字重)
+    name: 构建 (共享预处理 + centered/scaled 双变体, 8 字重)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -117,37 +120,41 @@ jobs:
           restore-keys: |
             jethan-mid-v3-jb${{ env.JB_VERSION }}-noto${{ env.NOTO_TAG }}-
 
-      - name: 构建 (JOBS 阶段内并行 + CJK 预处理去重; 校验拆至 test job)
+      - name: 构建 (双变体 + JOBS 阶段内并行 + CJK 预处理去重; 校验拆至 test job)
         run: bash font-build/build.sh
         env:
           SKIP_VERIFY: '1'
 
-      - name: 产物完整性检查 (8 字重 x ttf+woff2 + OFL)
+      - name: 产物完整性检查 (centered/scaled 各 8 字重 x ttf+woff2 + OFL)
         run: |
-          ls -la font-build/output/
-          for W in Thin ExtraLight Light Regular Medium SemiBold Bold ExtraBold; do
-            test -s font-build/output/JetHanMono-$W.ttf
-            test -s font-build/output/JetHanMono-$W.woff2
+          for V in centered scaled; do
+            echo "== $V =="
+            ls -la font-build/output/$V/
+            for W in Thin ExtraLight Light Regular Medium SemiBold Bold ExtraBold; do
+              test -s font-build/output/$V/JetHanMono-$W.ttf
+              test -s font-build/output/$V/JetHanMono-$W.woff2
+            done
+            test -s font-build/output/$V/JetHanMono-OFL.txt
           done
-          test -s font-build/output/JetHanMono-OFL.txt
 
-      - name: 上传构建产物
+      - name: 上传构建产物 (两套变体; 目录结构保留 centered/ scaled/)
         uses: actions/upload-artifact@v7
         with:
           name: JetHanMono-fonts
           path: |
-            font-build/output/JetHanMono-*.ttf
-            font-build/output/JetHanMono-*.woff2
-            font-build/output/JetHanMono-OFL.txt
+            font-build/output/centered/JetHanMono-*
+            font-build/output/scaled/JetHanMono-*
           if-no-files-found: error
 
-      - name: 上传 CJK 中间产物 (test job 的 verify 对比基准)
+      - name: 上传 CJK 中间产物 (test job 的 verify 对比基准, 双变体)
         uses: actions/upload-artifact@v7
         with:
           name: JetHanMono-cjk-converted
           path: |
-            font-build/converted/CJK-*.ttf
-            !font-build/converted/CJK-*.pre.ttf
+            font-build/converted/centered/CJK-*.ttf
+            !font-build/converted/centered/CJK-*.pre.ttf
+            font-build/converted/scaled/CJK-*.ttf
+            !font-build/converted/scaled/CJK-*.pre.ttf
           if-no-files-found: error
 
       - name: 上传构建日志 (失败时便于定位)
@@ -159,7 +166,7 @@ jobs:
           if-no-files-found: ignore
 
   test:
-    name: 校验 (verify + JBM 不变量 + HarfBuzz shaping, 8 字重)
+    name: 校验 (verify + JBM 不变量 + HarfBuzz shaping, 双变体 x 8 字重)
     needs: build
     # push / tag 必跑 (发布质量门槛); 手动 dispatch 可取消勾选 (但取消则不发布)
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_tests == 'true'
@@ -214,7 +221,7 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    name: 发布 GitHub Release
+    name: 发布 GitHub Release (双变体压缩包)
     if: >-
       (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
       || startsWith(github.ref, 'refs/tags/jethan-v')
@@ -224,25 +231,28 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 下载构建产物
+      - name: 下载构建产物 (centered/ 与 scaled/ 目录结构随 artifact 保留)
         uses: actions/download-artifact@v8
         with:
           name: JetHanMono-fonts
           path: dist
 
-      - name: 打包 ttf / woff2 两个压缩包 (各附 OFL, 文件名带版本号)
+      - name: 打包两套方案压缩包 (各含 ttf/ + woff2/ + OFL, 文件名带版本号)
         env:
           TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
         run: |
-          VERSION="${TAG#jethan-v}"   # jethan-v1.002 -> 1.002; 前缀不符时原样保留
-          mkdir ttf woff2
-          cp dist/JetHanMono-*.ttf dist/JetHanMono-OFL.txt ttf/
-          cp dist/JetHanMono-*.woff2 dist/JetHanMono-OFL.txt woff2/
-          # -j 压平目录: 解压即得字体文件, 可直接拖入字体查看器/控制面板安装
-          zip -j "dist/JetHanMono-${VERSION}-ttf.zip" ttf/*
-          zip -j "dist/JetHanMono-${VERSION}-woff2.zip" woff2/*
+          VERSION="${TAG#jethan-v}"   # jethan-v1.003 -> 1.003; 前缀不符时原样保留
+          for V in centered scaled; do
+            VCAP="${V^}"                # Centered / Scaled
+            mkdir -p "pkg/$V/ttf" "pkg/$V/woff2"
+            cp dist/$V/JetHanMono-*.ttf dist/$V/JetHanMono-OFL.txt "pkg/$V/ttf/"
+            cp dist/$V/JetHanMono-*.woff2 dist/$V/JetHanMono-OFL.txt "pkg/$V/woff2/"
+            ( cd "pkg/$V" && zip -r "$OLDPWD/dist/JetHanMono-${VERSION}-${VCAP}.zip" \
+                ttf woff2 JetHanMono-OFL.txt )
+          done
+          cp dist/centered/JetHanMono-OFL.txt dist/
           echo "== Release 资产清单 ($VERSION) =="
-          ls -la dist/
+          ls -la dist/JetHanMono-*.zip dist/JetHanMono-OFL.txt
 
       - name: 创建 Release
         uses: softprops/action-gh-release@v3
@@ -251,17 +261,29 @@ jobs:
           overwrite_files: true  # 同名资产直接替换, 支持 workflow_dispatch 覆盖更新已发布 Release
           name: JetHan Mono ${{ github.event.inputs.release_tag || github.ref_name }}
           body: |
-            JetHan Mono — JetBrains Mono × 思源等宽 拼合字体
+            JetHan Mono — JetBrains Mono × 思源等宽 拼合字体（居中 / 缩放 双方案）
+
+            自 1.003 起提供两套 CJK 几何方案, **字体内部名称完全一致**（均为 JetHan Mono）,
+            按需**二选一**下载安装（同名家族请勿同时安装, 会互相覆盖）:
+
+            - **JetHanMono-<版本>-Centered.zip 居中版（默认 / 推荐）**
+              CJK 轮廓不缩放, 保持思源等宽原始 1000u 设计与字面观感（"中"墨高 ~919u）,
+              设计盒水平居中于 1200u 全角格; 全部墨迹都在 JBM 纵向度量（1020/-300）之内。
+            - **JetHanMono-<版本>-Scaled.zip 缩放版（满格派）**
+              CJK 轮廓双轴 ×1.2 放大填满 1200u 全角格（"中"墨高 ~1103u, 比上游高 20%）,
+              更接近传统中文字体的字面率; 汉字顶部会略超出拉丁上伸部, 属该方案已知取舍。
+
+            每个压缩包内含 `ttf/` 与 `woff2/` 两个目录（8 字重）+ OFL 许可证, 解压即用。
 
             - 英文/代码字形: JetBrains Mono v2.304（优先, 含编程连字 calt）
-            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u, 轮廓不缩放仅水平居中）
+            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u）
             - 字重: Thin / ExtraLight / Light / Regular / Medium / SemiBold / Bold / ExtraBold 共 8 档
               （CJK 侧无 Heavy/ExtraLight, 按 usWeightClass 就近映射, 最重映射到 Noto Black）
+            - 两套方案共用同一构建管线与全部质量门槛（verify / JBM 不变量 / HarfBuzz 塑形 / 元数据审计）
             - 元数据完整: fontRevision 与 nameID5 一致、固定发布日、厂商/设计者/许可/URL 齐全、
               ulUnicodeRange 按合并后 cmap 重算（OS/2 vendID 'JHM '）
             - 许可: SIL OFL 1.1（思源保留字体名 'Source', 故本衍生字体另取名）
-            附件说明: 散装 8 字重 ttf / woff2 + OFL 之外, 另附两个打包——
-            JetHanMono-<版本>-ttf.zip 与 JetHanMono-<版本>-woff2.zip,
-            各含对应格式全部 8 字重 + OFL 许可证, 解压即用。
-          files: dist/*
+          files: |
+            dist/JetHanMono-*.zip
+            dist/JetHanMono-OFL.txt
           fail_on_unmatched_files: true

@@ -10,7 +10,9 @@ name: Metadata Audit
 #   - schedule: 每周一 03:23 UTC 审计最新 Release (漂移检测)
 #   - release: 发布/重发布事件自动审计刚分发的资产
 #
-# 审计对象: Release 的 JetHanMono-*.ttf / *.woff2 / OFL.txt
+# 审计对象: Release 的两个方案压缩包 (JetHanMono-*-Centered/-Scaled.zip,
+# 1.002 及更早版本为散装 ttf/woff2) + OFL.txt; 每个压缩包独立解包审计
+# (各含 ttf/ + woff2/ + OFL, 8 字重完整性按包内检查)
 # 结果: 任何 FAIL -> job 失败; 报告上传为 workflow artifact。
 
 on:
@@ -60,28 +62,43 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: 下载 Release 资产 (ttf/woff2/OFL)
+      - name: 下载 Release 资产 (方案压缩包 + OFL)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist
           gh release download "${{ steps.target.outputs.tag }}" \
             -R "$GITHUB_REPOSITORY" --dir dist \
-            --pattern 'JetHanMono-*.ttf' \
-            --pattern 'JetHanMono-*.woff2' \
+            --pattern 'JetHanMono-*.zip' \
             --pattern 'JetHanMono-OFL.txt'
           ls -la dist/
 
-      - name: 运行元数据审计 (M1-M15)
+      - name: 解包并逐包审计 (每个压缩包 = 一套完整字体)
         id: audit
         run: |
-          python3 font-build/tools/audit_metadata.py dist \
-            --report metadata-audit-report.json
+          set -euo pipefail
+          rm -rf unpacked && mkdir unpacked
+          shopt -s nullglob
+          zips=(dist/JetHanMono-*.zip)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "ERROR: Release 中未找到 JetHanMono-*.zip 压缩包" >&2
+            exit 1
+          fi
+          for z in "${zips[@]}"; do
+            name="$(basename "$z" .zip)"
+            d="unpacked/$name"
+            mkdir -p "$d"
+            unzip -q "$z" -d "$d"
+            echo "== 审计 $name (ttf + woff2 + OFL) =="
+            python3 font-build/tools/audit_metadata.py \
+              "$d/ttf" "$d/woff2" "$d/JetHanMono-OFL.txt" \
+              --report "metadata-audit-report-${name}.json"
+          done
 
       - name: 上传审计报告
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: metadata-audit-report
-          path: metadata-audit-report.json
+          path: metadata-audit-report-*.json
           if-no-files-found: ignore

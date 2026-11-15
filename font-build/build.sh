@@ -2,8 +2,12 @@
 # JetHan Mono 一键构建脚本 (v3: 阶段内并行 + CJK 预处理去重 + 阶段耗时统计)
 # JetBrains Mono (英文/代码, 优先) + Noto Sans Mono CJK SC (思源等宽同源字体, 补充中文)
 #
-# 流程: CJK 预处理分组(去重) -> 子集化 -> CFF->TTF -> CJK 步进 1200u
-#       -> 拼合 -> 改名/woff2 -> 校验
+# 流程: CJK 预处理分组(去重) -> 子集化 -> CFF->TTF
+#   -> 按变体循环 [CJK 步进 1200u (居中/缩放) -> 拼合 -> 改名/woff2 -> 校验]
+#
+# 双变体 (1.003 起, 字体内名相同, 发行时按变体分两个压缩包):
+#   centered  CJK 轮廓不缩放, 设计盒水平居中于 1200u 格 (v3 定案, 默认推荐)
+#   scaled    CJK 轮廓 x1.2 双轴放大填满 1200u 格 (v2 几何, 满格派选择)
 #
 # Windows (Git Bash / MSYS2) 兼容性:
 #   - 下方守卫行自动把 CRLF 脚本修复为 LF 后重启 (git autocrlf=true 检出的常见坑)
@@ -17,6 +21,7 @@
 #      bash build.sh Medium ExtraBold   # 只构建指定字重 (增量调试)
 #      JOBS=4 bash build.sh             # 每阶段最多 4 个任务并行 (阶段间保持屏障)
 #      SKIP_WOFF2=1 bash build.sh       # 日常调试: 只出 TTF
+#      VARIANTS=centered bash build.sh  # 只构建指定变体 (默认居中+缩放两套)
 #      bash build.sh --verify-only      # 只跑第 6 阶段校验 (CI 的 test job 即此模式)
 #
 # 环境开关:
@@ -25,8 +30,11 @@
 #   SKIP_WOFF2=1    跳过 woff2 导出 (调整宽度/查轮廓时 TTF 足够)
 #   SKIP_VERIFY=1   跳过校验阶段 (CI 把校验拆到独立 test job)
 #   FORCE_BUILD=1   忽略指纹强制全量重建
+#   VARIANTS="..."  空格分隔的变体列表 (默认 "centered scaled"; 子集化/转换
+#                   是共享层只跑一次, 变体只影响 吸附/拼合/改名/woff2/校验)
 #
-# 产物: output/JetHanMono-<Weight>.ttf/.woff2 (x8) + JetHanMono-OFL.txt
+# 产物: output/<variant>/JetHanMono-<Weight>.ttf/.woff2 (x8) + JetHanMono-OFL.txt
+#       (每变体一套; 两套文件名与字体内名完全相同, 仅几何不同)
 #
 # 步骤级增量 (CI 缓存友好):
 #   每步执行后把"输入文件联合 sha256"写入 <标记> 文件; 重跑时输入指纹未变
@@ -35,16 +43,18 @@
 #   rename.py 时, 子集化/转换/吸附/拼合全部跳过, 只重跑改名+woff2)。
 #   单次构建内文件哈希按 (路径 + size + mtime) 缓存复用: 同一份被多个字重
 #   引用的 Noto OTF 只读盘算一次哈希, 命中缓存时不再反复起 sha256sum 进程。
-#   注意 otf2ttf 输出为 <name>.pre.ttf (吸附前的原始转换), scale 从
-#   .pre.ttf 复制后原地改写; merge 输出 output/.merged-<Weight>.ttf
-#   (改名前的原始拼合), rename 从 .merged 复制后原地改名 —— 输入输出
-#   分离才能对"原地覆盖"型步骤做可靠的指纹判断。
+#   注意 otf2ttf 输出为 <name>.pre.ttf (吸附前的原始转换, 变体无关共享层),
+#   scale 从 .pre.ttf 复制后原地改写 (产物按变体放 converted/<variant>/);
+#   merge 输出 output/<variant>/.merged-<Weight>.ttf (改名前的原始拼合),
+#   rename 从 .merged 复制后原地改名 —— 输入输出分离才能对"原地覆盖"
+#   型步骤做可靠的指纹判断。
 #
 # CJK 预处理去重 (v3):
 #   子集化输出只取决于 (CJK 源字体, 保留码位集 = cjk_cmap - jb_cmap)。
 #   tools/cjk_dedup.py 按实际 cmap 差集分组: 八档输出只用 6 份 CJK 源
 #   (ExtraLight/Light 共用 Noto Light, SemiBold/Bold 共用 Noto Mono Bold),
-#   同组字重共享一份子集化/转换/吸附产物 (文件名 CJK-<gid>.ttf),
+#   同组字重共享一份子集化/转换/吸附产物 (文件名 CJK-<gid>.ttf; 吸附产物
+#   按变体放 converted/<variant>/),
 #   预处理任务 8 -> 6; gid 含 CJK 源字节指纹 + 保留码位集指纹, 任一变化
 #   自然落到新文件。拼合及之后仍按字重独立 (JBM 侧各不相同)。
 #
@@ -86,6 +96,13 @@ if [ "$JOBS" -lt 1 ]; then JOBS=1; fi
 SKIP_WOFF2="${SKIP_WOFF2:-0}"
 SKIP_VERIFY="${SKIP_VERIFY:-0}"
 FORCE="${FORCE_BUILD:-0}"
+VARIANTS="${VARIANTS:-centered scaled}"
+for _v in $VARIANTS; do
+  case "$_v" in
+    centered|scaled) ;;
+    *) echo "ERROR: 未知变体 '$_v' (可选: centered scaled)"; exit 1 ;;
+  esac
+done
 VERIFY_ONLY=0
 POSITIONAL=()
 for a in "$@"; do
@@ -116,10 +133,16 @@ fi
 echo "构建字重: ${JB_WEIGHTS[*]}"
 echo "CJK 映射: ${NK_WEIGHTS[*]}"
 echo "JOBS=$JOBS  SKIP_WOFF2=$SKIP_WOFF2  SKIP_VERIFY=$SKIP_VERIFY  FORCE_BUILD=$FORCE  VERIFY_ONLY=$VERIFY_ONLY"
+echo "变体: $VARIANTS (centered=不缩放+居中; scaled=轮廓x1.2填满全角格)"
 
 LOGDIR="build-logs"
 mkdir -p subsetted converted output "$LOGDIR/timing"
 rm -f "$LOGDIR"/timing/* 2>/dev/null || true
+
+# v1.003 起变体产物分目录 (converted/<variant>/ output/<variant>/);
+# 清掉旧布局的根级产物, 避免旧缓存被误用/误打包 (subset/otf2ttf 共享层不动)
+find converted -maxdepth 1 -name 'CJK-*.ttf' ! -name '*.pre.ttf' -delete 2>/dev/null || true
+rm -f converted/.dh-*.scale output/.merged-*.ttf output/.dh-* output/JetHanMono-* 2>/dev/null || true
 
 # ---- 步骤级增量助手: 输入指纹未变 + 输出存在 => 跳过 ----
 # 单次构建内的文件哈希缓存: key = 路径 + (size:mtime), 任一变化即重算,
@@ -141,7 +164,8 @@ filehash() { # filehash <file> -> sha256 (缺失/空文件 => "-")
   printf '%s' "$h"
 }
 DEPHASH() { # DEPHASH <file...> -> 联合 sha256; 缺失文件也参与 hash => 触发重跑
-  local h=""
+            # DEPHASH_EXTRA (若设置) 参与哈希 => 变体隔离 (local 动态作用域可见)
+  local h="${DEPHASH_EXTRA-}"
   local f
   for f in "$@"; do
     h="$h$(filehash "$f")"
@@ -272,90 +296,99 @@ stage_otf2ttf() {
   report_time otf2ttf "$gid" "$(( $(date +%s) - t0 ))"
 }
 
-# ---------- 阶段 3/6: CJK 步进吸附 1200u + 墨迹水平居中 (按 gid 去重) ----------
+# ---------- 阶段 3/6: CJK 步进吸附 1200u (按变体 + 按 gid 去重) ----------
+# 参数 <variant>-<gid>: 吸附几何随变体不同, 指纹以 DEPHASH_EXTRA 隔离
 stage_scale() {
-  local gid="$1" t0
-  local out="converted/CJK-$gid.ttf"
-  if STEP_UP2DATE "$out" "converted/.dh-$gid.scale" \
+  local spec="$1" t0 VARIANT gid out
+  VARIANT="${spec%%-*}"; gid="${spec#*-}"
+  local DEPHASH_EXTRA="variant=$VARIANT"
+  local out="converted/$VARIANT/CJK-$gid.ttf"
+  if STEP_UP2DATE "$out" "converted/$VARIANT/.dh-$gid.scale" \
        "converted/CJK-$gid.pre.ttf" "tools/scale_cjk.py"; then
-    echo "  [$gid] skip (指纹命中, 命中缓存)"
+    echo "  [$VARIANT/$gid] skip (指纹命中, 命中缓存)"
     return 0
   fi
   t0=$(date +%s)
   cp -f "converted/CJK-$gid.pre.ttf" "$out"
-  "$PYTHON_BIN" tools/scale_cjk.py "$out"
-  STEP_MARK "converted/.dh-$gid.scale" "converted/CJK-$gid.pre.ttf" "tools/scale_cjk.py"
-  report_time scale "$gid" "$(( $(date +%s) - t0 ))"
+  "$PYTHON_BIN" tools/scale_cjk.py --variant "$VARIANT" "$out"
+  STEP_MARK "converted/$VARIANT/.dh-$gid.scale" "converted/CJK-$gid.pre.ttf" "tools/scale_cjk.py"
+  report_time scale "$spec" "$(( $(date +%s) - t0 ))"
 }
 
-# ---------- 阶段 4/6: 拼合 (每字重; 第一个字体优先, Merger API) ----------
+# ---------- 阶段 4/6: 拼合 (每变体 x 每字重; 第一个字体优先, Merger API) ----------
 stage_merge() {
-  local W="$1" t0 gid
+  local spec="$1" t0 VARIANT W gid
+  VARIANT="${spec%%-*}"; W="${spec#*-}"
+  local DEPHASH_EXTRA="variant=$VARIANT"
   gid="${GID_OF[$W]}"
   if [ -z "$gid" ]; then echo "ERROR: 分组映射缺少字重 '$W' (GID_OF)" >&2; return 1; fi
-  local out="output/.merged-$W.ttf"
-  if STEP_UP2DATE "$out" "output/.dh-$W.merge" \
-       "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "tools/merge_fonts.py"; then
-    echo "  [$W] skip (指纹命中, 命中缓存)"
+  local out="output/$VARIANT/.merged-$W.ttf"
+  if STEP_UP2DATE "$out" "output/$VARIANT/.dh-$W.merge" \
+       "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf" "tools/merge_fonts.py"; then
+    echo "  [$VARIANT/$W] skip (指纹命中, 命中缓存)"
     return 0
   fi
   t0=$(date +%s)
-  "$PYTHON_BIN" tools/merge_fonts.py -o "$out" "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf"
-  STEP_MARK "output/.dh-$W.merge" "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "tools/merge_fonts.py"
-  report_time merge "$W" "$(( $(date +%s) - t0 ))"
+  "$PYTHON_BIN" tools/merge_fonts.py -o "$out" "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf"
+  STEP_MARK "output/$VARIANT/.dh-$W.merge" "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf" "tools/merge_fonts.py"
+  report_time merge "$spec" "$(( $(date +%s) - t0 ))"
 }
 
-# ---------- 阶段 5/6: 改名+度量锁定 / woff2 (每字重) ----------
+# ---------- 阶段 5/6: 改名+度量锁定 / woff2 (每变体 x 每字重) ----------
 stage_rename() {
-  local W="$1" t0
-  local out="output/JetHanMono-$W.ttf"
-  if STEP_UP2DATE "$out" "output/.dh-$W.rename" \
-       "output/.merged-$W.ttf" "tools/rename.py"; then
-    echo "  [$W] rename skip (指纹命中, 命中缓存)"
+  local spec="$1" t0 VARIANT W
+  VARIANT="${spec%%-*}"; W="${spec#*-}"
+  local DEPHASH_EXTRA="variant=$VARIANT"
+  local out="output/$VARIANT/JetHanMono-$W.ttf"
+  if STEP_UP2DATE "$out" "output/$VARIANT/.dh-$W.rename" \
+       "output/$VARIANT/.merged-$W.ttf" "tools/rename.py"; then
+    echo "  [$VARIANT/$W] rename skip (指纹命中, 命中缓存)"
   else
     t0=$(date +%s)
-    cp -f "output/.merged-$W.ttf" "$out"
+    cp -f "output/$VARIANT/.merged-$W.ttf" "$out"
     "$PYTHON_BIN" tools/rename.py "$out"
-    STEP_MARK "output/.dh-$W.rename" "output/.merged-$W.ttf" "tools/rename.py"
-    report_time rename "$W" "$(( $(date +%s) - t0 ))"
+    STEP_MARK "output/$VARIANT/.dh-$W.rename" "output/$VARIANT/.merged-$W.ttf" "tools/rename.py"
+    report_time rename "$spec" "$(( $(date +%s) - t0 ))"
   fi
   if [ "$SKIP_WOFF2" = "1" ]; then
-    echo "  [$W] woff2 跳过 (SKIP_WOFF2=1)"
+    echo "  [$VARIANT/$W] woff2 跳过 (SKIP_WOFF2=1)"
     return 0
   fi
-  local wout="output/JetHanMono-$W.woff2"
-  if STEP_UP2DATE "$wout" "output/.dh-$W.woff2" \
+  local wout="output/$VARIANT/JetHanMono-$W.woff2"
+  if STEP_UP2DATE "$wout" "output/$VARIANT/.dh-$W.woff2" \
        "$out" "tools/export_woff2.py"; then
-    echo "  [$W] woff2 skip (指纹命中, 命中缓存)"
+    echo "  [$VARIANT/$W] woff2 skip (指纹命中, 命中缓存)"
   else
     t0=$(date +%s)
     "$PYTHON_BIN" tools/export_woff2.py "$out"
-    STEP_MARK "output/.dh-$W.woff2" "$out" "tools/export_woff2.py"
-    report_time woff2 "$W" "$(( $(date +%s) - t0 ))"
+    STEP_MARK "output/$VARIANT/.dh-$W.woff2" "$out" "tools/export_woff2.py"
+    report_time woff2 "$spec" "$(( $(date +%s) - t0 ))"
   fi
 }
 
-# ---------- 阶段 6/6: 校验 (静态度量 + HarfBuzz shaping; 每字重) ----------
+# ---------- 阶段 6/6: 校验 (静态度量 + HarfBuzz shaping; 每变体 x 每字重) ----------
 stage_verify() {
-  local W="$1" t0 gid
+  local spec="$1" t0 VARIANT W gid
+  VARIANT="${spec%%-*}"; W="${spec#*-}"
+  local DEPHASH_EXTRA="variant=$VARIANT"
   gid="${GID_OF[$W]}"
   if [ -z "$gid" ]; then echo "ERROR: 分组映射缺少字重 '$W' (GID_OF)" >&2; return 1; fi
-  local vd="output/.dh-$W.verified"
+  local vd="output/$VARIANT/.dh-$W.verified"
   if STEP_UP2DATE "$vd" "$vd" \
-       "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" \
-       "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py" \
+       "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf" \
+       "output/$VARIANT/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py" \
        "tools/invariant_test.py"; then
-    echo "  [$W] skip (产物指纹未变, 校验结论沿用)"
+    echo "  [$VARIANT/$W] skip (产物指纹未变, 校验结论沿用)"
     return 0
   fi
   t0=$(date +%s)
-  "$PYTHON_BIN" tools/verify.py "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "output/JetHanMono-$W.ttf"
-  "$PYTHON_BIN" tools/shape_test.py "downloads/JetBrainsMono-$W.ttf" "output/JetHanMono-$W.ttf"
-  "$PYTHON_BIN" tools/invariant_test.py "downloads/JetBrainsMono-$W.ttf" "output/JetHanMono-$W.ttf"
-  STEP_MARK "$vd" "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" \
-    "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py" \
+  "$PYTHON_BIN" tools/verify.py "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf" "output/$VARIANT/JetHanMono-$W.ttf"
+  "$PYTHON_BIN" tools/shape_test.py "downloads/JetBrainsMono-$W.ttf" "output/$VARIANT/JetHanMono-$W.ttf"
+  "$PYTHON_BIN" tools/invariant_test.py "downloads/JetBrainsMono-$W.ttf" "output/$VARIANT/JetHanMono-$W.ttf"
+  STEP_MARK "$vd" "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf" \
+    "output/$VARIANT/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py" \
     "tools/invariant_test.py"
-  report_time verify "$W" "$(( $(date +%s) - t0 ))"
+  report_time verify "$spec" "$(( $(date +%s) - t0 ))"
 }
 
 # ---- CJK 预处理分组 (去重; 分组结果本身也带指纹缓存) ----
@@ -395,12 +428,14 @@ T_TOTAL0=$(date +%s)
 # ---------- --verify-only: 只跑第 6 阶段 (CI test job 用) ----------
 if [ "$VERIFY_ONLY" = "1" ]; then
   echo ""
-  echo "== --verify-only: 只跑校验 (要求 downloads/ + converted CJK 分组产物 + output/ 已就位) =="
+  echo "== --verify-only: 只跑校验 (要求 downloads/ + converted/<变体>/CJK 分组产物 + output/<变体>/ 已就位) =="
   _missing=0
-  for W in "${JB_WEIGHTS[@]}"; do
-    gid="${GID_OF[$W]}"
-    for f in "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "output/JetHanMono-$W.ttf"; do
-      if [ ! -s "$f" ]; then echo "MISSING: $f"; _missing=1; fi
+  for VARIANT in $VARIANTS; do
+    for W in "${JB_WEIGHTS[@]}"; do
+      gid="${GID_OF[$W]}"
+      for f in "downloads/JetBrainsMono-$W.ttf" "converted/$VARIANT/CJK-$gid.ttf" "output/$VARIANT/JetHanMono-$W.ttf"; do
+        if [ ! -s "$f" ]; then echo "MISSING: $f"; _missing=1; fi
+      done
     done
   done
   if [ "$_missing" -ne 0 ]; then
@@ -408,7 +443,10 @@ if [ "$VERIFY_ONLY" = "1" ]; then
     exit 1
   fi
   s0=$(date +%s)
-  map_run stage_verify "${JB_WEIGHTS[@]}"
+  for VARIANT in $VARIANTS; do
+    echo "  [变体 $VARIANT]"
+    map_run stage_verify "${JB_WEIGHTS[@]/#/$VARIANT-}"
+  done
   echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
   print_summary
   echo "完成 (verify-only)! 总耗时 $(fmt_dur "$(( $(date +%s) - T_TOTAL0 ))")"
@@ -426,41 +464,50 @@ echo "== 2/6 CFF -> TrueType 轮廓转换 (cu2qu, 输出 .pre.ttf 供 scale 增�
 s0=$(date +%s); map_run stage_otf2ttf "${GIDS[@]}"
 echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
 
-echo ""
-echo "== 3/6 CJK 步进吸附 1200u + 墨迹水平居中 (不缩放轮廓; 1000u->1200u = 2 x 拉丁 600u) =="
-s0=$(date +%s); map_run stage_scale "${GIDS[@]}"
-echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
+# ---- 阶段 3-6 按变体循环 (子集化/转换是共享层, 只跑一次) ----
+for VARIANT in $VARIANTS; do
+  mkdir -p "converted/$VARIANT" "output/$VARIANT"
 
-echo ""
-echo "== 4/6 拼合 (第一个字体优先, Merger API; 输出 .merged-* 供 rename 增量) =="
-s0=$(date +%s); map_run stage_merge "${JB_WEIGHTS[@]}"
-echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
-
-echo ""
-echo "== 5/6 重命名+度量锁定 / woff2 / OFL (均支持指纹跳过) =="
-s0=$(date +%s); map_run stage_rename "${JB_WEIGHTS[@]}"
-echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
-# OFL 许可证 (依赖 JetBrains OFL 原文 + rename.py)
-if STEP_UP2DATE "output/JetHanMono-OFL.txt" "output/.dh-ofl" \
-     "downloads/JetBrainsMono-OFL.txt" "tools/rename.py"; then
-  echo "  [OFL] skip (输入指纹未变, 命中缓存)"
-else
-  echo "  [OFL] run"
-  "$PYTHON_BIN" tools/rename.py --license-only output
-  STEP_MARK "output/.dh-ofl" "downloads/JetBrainsMono-OFL.txt" "tools/rename.py"
-fi
-
-echo ""
-echo "== 6/6 校验 (静态度量 + HarfBuzz shaping + JBM 不变量) =="
-if [ "$SKIP_VERIFY" = "1" ]; then
-  echo "  [verify] 跳过 (SKIP_VERIFY=1; CI 由独立 test job 执行)"
-else
-  s0=$(date +%s); map_run stage_verify "${JB_WEIGHTS[@]}"
+  echo ""
+  echo "== [$VARIANT] 3/6 CJK 步进吸附 1200u (centered=不缩放仅居中 / scaled=轮廓x1.2填满格; 1200u = 2 x 拉丁 600u) =="
+  s0=$(date +%s); map_run stage_scale "${GIDS[@]/#/$VARIANT-}"
   echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
-fi
+
+  echo ""
+  echo "== [$VARIANT] 4/6 拼合 (第一个字体优先, Merger API; 输出 .merged-* 供 rename 增量) =="
+  s0=$(date +%s); map_run stage_merge "${JB_WEIGHTS[@]/#/$VARIANT-}"
+  echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
+
+  echo ""
+  echo "== [$VARIANT] 5/6 重命名+度量锁定 / woff2 / OFL (均支持指纹跳过) =="
+  s0=$(date +%s); map_run stage_rename "${JB_WEIGHTS[@]/#/$VARIANT-}"
+  echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
+  # OFL 许可证 (依赖 JetBrains OFL 原文 + rename.py; 每变体一份)
+  if STEP_UP2DATE "output/$VARIANT/JetHanMono-OFL.txt" "output/$VARIANT/.dh-ofl" \
+       "downloads/JetBrainsMono-OFL.txt" "tools/rename.py"; then
+    echo "  [$VARIANT/OFL] skip (输入指纹未变, 命中缓存)"
+  else
+    echo "  [$VARIANT/OFL] run"
+    "$PYTHON_BIN" tools/rename.py --license-only "output/$VARIANT"
+    STEP_MARK "output/$VARIANT/.dh-ofl" "downloads/JetBrainsMono-OFL.txt" "tools/rename.py"
+  fi
+
+  echo ""
+  echo "== [$VARIANT] 6/6 校验 (静态度量 + HarfBuzz shaping + JBM 不变量) =="
+  if [ "$SKIP_VERIFY" = "1" ]; then
+    echo "  [verify] 跳过 (SKIP_VERIFY=1; CI 由独立 test job 执行)"
+  else
+    s0=$(date +%s); map_run stage_verify "${JB_WEIGHTS[@]/#/$VARIANT-}"
+    echo "  [阶段墙钟 $(fmt_dur "$(( $(date +%s) - s0 ))")]"
+  fi
+done
 
 print_summary
 echo ""
-echo "完成! 产物在 output/, 复制到 web:"
-echo "  cp output/JetHanMono-*.ttf output/JetHanMono-*.woff2 output/JetHanMono-OFL.txt ../public/fonts/"
+echo "完成! 产物在 output/<variant>/ (每变体一套, 字体内名相同):"
+for VARIANT in $VARIANTS; do
+  echo "  $VARIANT -> output/$VARIANT/JetHanMono-*.ttf/.woff2 + JetHanMono-OFL.txt"
+done
+echo "复制到 web (预览站默认用居中版):"
+echo "  cp output/centered/JetHanMono-*.ttf output/centered/JetHanMono-*.woff2 output/centered/JetHanMono-OFL.txt ../public/fonts/"
 echo "总耗时: $(fmt_dur "$(( $(date +%s) - T_TOTAL0 ))")"
