@@ -40,6 +40,12 @@ bash build.sh Medium Bold                # 增量构建指定字重
 
 子集化 `subset_cjk.py` → CFF→glyf `otf2ttf.py`（cu2qu）→ CJK 步进 1200u `scale_cjk.py` → 拼合 `merge_fonts.py`（fonttools Merger API）→ 命名与元数据 `rename.py` / `export_woff2.py` → 校验 `verify.py` / `shape_test.py`。
 
+## 设计契约
+
+- **JBM 优先且完全一致**：非中文/全角码位的字形、步进与纵向度量（hhea ascent 1020 / descent −300）与原版 JetBrains Mono 一致，CJK 仅作缺失码位补充。
+- **CJK 轮廓不缩放**：思源等宽字形保持原始 1000u 设计与原始字高（观感 = 上游原样），仅步进吸附为 1200u（= 2×600u）并把原设计盒水平居中（1000→1200 偏移 +100u，500→600 +50u，920→1200 +140u）；垂直基线关系维持思源原设计。
+- **历史注记**：v1.001 曾将 CJK 轮廓等比放大 ×1.2 以"墨迹填满双格"（Maple Mono SC 流派）。但当时观测的 ≥1 格空白不可能由居中产生（1000u 盒放进 1200u 格，居中至多 ~0.33 格/侧），属误诊；放大反使汉字比上游高 20%（"中"墨迹 919u→1103u），故 v3 回退为不缩放方案。
+
 ## 目录
 
 ```

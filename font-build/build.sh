@@ -135,7 +135,7 @@ for W in "${JB_WEIGHTS[@]}"; do
   fi
 done
 
-echo "== 3/6 CJK 等比缩放 x1.2 并步进对齐 (1000u->1200u = 2 x 拉丁 600u, 墨迹填满两格) =="
+echo "== 3/6 CJK 步进吸附 1200u + 墨迹水平居中 (不缩放轮廓; 1000u->1200u = 2 x 拉丁 600u) =="
 for W in "${JB_WEIGHTS[@]}"; do
   if STEP_UP2DATE "converted/NotoMonoSC-$W.ttf" "converted/.dh-$W.scale" \
        "converted/NotoMonoSC-$W.pre.ttf" "tools/scale_cjk.py"; then

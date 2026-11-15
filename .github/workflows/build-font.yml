@@ -165,7 +165,7 @@ jobs:
             JetHan Mono — JetBrains Mono × 思源等宽 拼合字体
 
             - 英文/代码字形: JetBrains Mono v2.304（优先, 含编程连字 calt）
-            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u）
+            - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u, 轮廓不缩放仅水平居中）
             - 字重: Thin / ExtraLight / Light / Regular / Medium / SemiBold / Bold / ExtraBold 共 8 档
               （CJK 侧无 Heavy/ExtraLight, 按 usWeightClass 就近映射, 最重映射到 Noto Black）
             - 元数据完整: fontRevision 与 nameID5 一致、固定发布日、厂商/设计者/许可/URL 齐全、

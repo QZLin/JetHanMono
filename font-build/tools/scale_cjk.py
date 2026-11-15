@@ -1,52 +1,41 @@
 #!/usr/bin/env python3
 """Snap CJK advance widths to the terminal 2:1 grid (2 x JetBrains Mono latin)
-AND scale the outlines proportionally so the ink FILLS the new cell.
+and CENTER the unscaled Source Han ink inside the new cell (v3).
 
-Background:
-  JetBrains Mono latin advance = 600/1000em.  Terminals and editors align
-  CJK text against latin columns only when one wide (East-Asian Wide/Fullwidth)
-  char occupies exactly two latin cells (2:1).  Upstream widths in Noto Sans
-  Mono CJK SC (= Source Han Mono design) are:
+Design contract (v3, 定案):
+  - JetBrains Mono 优先: 非 CJK/全角码位的字形与度量与 JBM 完全一致
+    (rename.py 另把纵向度量锁回 JBM 的 1020/-300);
+  - CJK 轮廓一律不缩放: 保持 Source Han Mono 原始 1000u 设计,
+    方块字占满 em 的天然观感与上游完全相同 (高度不被放大);
+  - 唯一的几何调整 = 把原 advance 盒在新的更宽步进里水平居中,
+    垂直方向不做任何处理 (基线相对位置 = Source Han 原设计):
 
-      full-width ideographs / kana / punct / symbols   1000u
-      halfwidth forms (U+FF61-FF9F)                     500u
-      Hangul syllables + jamo (1100/AC00/A960/D7B0...)  920u
-      latin-width glyphs (e.g. U+FB01 fi)               600u
-      proportional leftovers (ext-latin, ligatures)     anything
+      1000u -> 1200u  dx=+100   ideographs / kana / fullwidth punct
+       500u ->  600u  dx=+50    halfwidth forms == latin advance
+       920u -> 1200u  dx=+140   Hangul normalized onto the grid
+       else unchanged  latin-width & proportional glyphs stay as designed
 
   Merging at 1000u would give a 1.667:1 latin:CJK ratio and mixed columns
-  drift apart.  This step puts every wide glyph onto the mono grid so that
-  wide == 1200u == 2 x 600u:
+  drift apart; the snapped advance is what makes wide == 1200u == 2 x 600u.
 
-      1000u -> 1200u   (scale x1.2; ink fills the cell like Source Han does)
-       500u ->  600u   (scale x1.2; halfwidth == latin advance)
-       920u -> 1200u   (scale x1.2 + center; Hangul normalized onto the grid)
-       else unchanged  (latin-width & proportional glyphs stay as designed)
+History:
+  v1  advance snap + center, outlines untouched.
+  v2  outlines scaled x1.2 on BOTH axes ("ink fills the cell", Maple Mono
+      SC style). REVERTED by v3: that fix was based on a misdiagnosis.
+      The gap measured back then was >= 1 full latin cell, while centering
+      a 1000u box in 1200u can add at most ~0.33 cell of padding per side
+      - centering cannot produce a >= 1-cell gap, so the scaling was
+      treating the wrong cause and made hanzi 20% taller than upstream
+      Source Han (ink 919u -> 1103u for 中). v3 returns to v1 geometry;
+      the old wide-gap symptom had unrelated causes (cmap/PANOSE/layout
+      era bugs, since fixed) and must not be "fixed" by scaling.
 
-WHY SCALE THE OUTLINES TOO (v2, fixes "CJK chars have a ~0.7-cell empty gap
-to their right in JetBrains IDEs"):
-  v1 only widened the advance and translated the ink to center it, keeping
-  the outlines at their 1000u design size.  That leaves the ink filling only
-  ~67% of the 1200u box (Source Han fills ~80-96% of its own box), so every
-  CJK char gained ~0.33 cell of padding on EACH side - the gap between two
-  hanzi's ink grew to 0.66 cell (vs 0.37 in Source Han Mono), and full-width
-  punctuation left over a full latin cell of blank space.  Pixel probes
-  (PixelProbe.java) confirmed the rendered gap after a hanzi was 6px vs
-  Source Han's 2px at the same size.  The fix used by Sarasa Gothic / Maple
-  Mono SC is proportional scaling: the CJK em box IS 1.2x the latin cell, so
-  the glyphs must be scaled x1.2 on BOTH axes to keep Source Han's ink
-  density.  With scale=1.2 the translate is a no-op for 1000u->1200u and
-  500u->600u (the ink is already proportionally centered); only 920u Hangul
-  gets an explicit +48u centering shift.
-
-Vertical metrics note:
-  Dense hanzi ink after scaling stays within the locked JetBrains vertical
-  box (ascent 1020 / descent -300).  A handful of rare mark/symbol glyphs
-  (〱〲Å｀＾〰 ...) reach slightly above 1020u; no engine clips ink
-  vertically in editors, same as Sarasa.
+Idempotency: 中 advance==1200 => skip.  A v2-era file also has adv=1200
+but SCALED outlines; the probe detects that (ink height > 1000u) and
+aborts loudly instead of silently skipping - rerun from the .pre.ttf
+copy (build.sh always does) or FORCE_BUILD=1.
 
 Zero-advance (combining) glyphs are left untouched.
-Idempotent: a second run detects the already-scaled advance and exits.
 
 Runs AFTER otf2ttf (glyf outlines exist) and BEFORE the merge.
 
@@ -58,9 +47,11 @@ from fontTools.ttLib import TTFont
 
 # old advance -> new advance
 WIDTH_MAP = {500: 600, 1000: 1200, 920: 1200}
-# CJK em 1000u -> 1200u (2 x JetBrains Mono latin 600u): outlines scale x1.2
-# on both axes so ink density matches Source Han Mono exactly.
-SCALE = 1.2
+# v3: outlines are NEVER scaled.  SCALE stays in the dx formula so the
+# centering shift reads uniformly: dx = (new_adv - adv * SCALE) / 2.
+SCALE = 1.0
+# v2-scaled artifacts carry 中 ink height ~1103u; unscaled is ~919u.
+V2_INK_TELL = 1000
 
 
 def scale_font(path):
@@ -69,11 +60,25 @@ def scale_font(path):
     hmtx = font["hmtx"]
     cmap = font.getBestCmap()
 
-    # idempotency probe: U+4E2D (中) must already be full-width AND scaled
-    probe = hmtx[cmap[0x4E2D]][0] if 0x4E2D in cmap else None
-    if probe == WIDTH_MAP[1000]:
-        print(f"{path}: already scaled (中 advance={probe}), skip")
-        return
+    # idempotency probe on U+4E2D (中)
+    if 0x4E2D in cmap:
+        gname = cmap[0x4E2D]
+        adv, _lsb = hmtx[gname]
+        if adv == WIDTH_MAP[1000]:
+            glyph = glyf[gname]
+            if glyph.numberOfContours > 0:
+                coords, _ends, _flags = glyph.getCoordinates(glyf)
+                ys = [p[1] for p in coords]
+                ink = max(ys) - min(ys)
+                if ink > V2_INK_TELL:
+                    sys.exit(
+                        f"{path}: 中 advance={adv} but ink height={ink} "
+                        f"-> v2-scaled outlines detected; refusing to skip. "
+                        f"Rebuild from the .pre.ttf copy (build.sh does this) "
+                        f"or run with FORCE_BUILD=1."
+                    )
+            print(f"{path}: already snapped (中 advance={adv}), skip")
+            return
 
     stats = {}  # (old, new) -> count
     n_zero = 0
@@ -86,23 +91,21 @@ def scale_font(path):
         new_adv = WIDTH_MAP.get(adv)
         if new_adv is None:
             continue  # latin-width / proportional glyphs stay as designed
-        # center: scaled ink spans adv*SCALE wide; shift = (new - adv*SCALE)/2
-        # 1000->1200: 0, 500->600: 0, 920->1200: +48
+        # center: the ORIGINAL design box (adv*SCALE wide, SCALE=1.0) sits
+        # centered in the new cell; shift = (new - adv)/2
+        # 1000->1200: +100, 500->600: +50, 920->1200: +140
         dx = (new_adv - adv * SCALE) / 2
         glyph = glyf[name]
         if glyph.numberOfContours > 0:
             coords, _ends, _flags = glyph.getCoordinates(glyf)
-            coords.transform(((SCALE, 0), (0, SCALE)))
-            if dx:
-                coords.translate((dx, 0))
+            coords.translate((dx, 0))
             glyph.recalcBounds(glyf)
         elif glyph.isComposite():
-            # scale xy-offset components (point-matched ones follow their
-            # base glyph, which is scaled by this same pass)
+            # shift xy-offset components (point-matched ones follow their
+            # base glyph, which is shifted by this same pass)
             for comp in glyph.components:
                 if comp.flags & 0x0002:  # ARGS_ARE_XY_VALUES
                     comp.x = comp.x * SCALE + dx
-                    comp.y = comp.y * SCALE
             glyph.recalcBounds(glyf)
         hmtx[name] = (new_adv, glyph.xMin if glyph.numberOfContours else 0)
         stats[(adv, new_adv)] = stats.get((adv, new_adv), 0) + 1
