@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, type CSSProperties } from 'react'
-import { Check, Download, LoaderCircle } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Check, Download, ExternalLink, LoaderCircle, RefreshCw } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,8 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 type FontStatus = 'loading' | 'loaded' | 'error'
+type ReleaseStatus = 'loading' | 'ready' | 'error'
+type Variant = 'centered' | 'scaled'
 
 type MonoFontClass = 'font-jethan' | 'font-sysmono'
 
@@ -30,9 +32,29 @@ interface WeightDef {
   readonly css: number
   /** CJK 侧字形来源（等宽版仅 Regular/Bold，其余来自 Noto Sans CJK SC 同源设计） */
   readonly cjk: string
-  /** 文件大小（构建完成后回填） */
-  readonly ttfSize: string
-  readonly woff2Size: string
+}
+
+interface AssetInfo {
+  readonly name: string
+  readonly url: string
+  readonly size: number
+}
+
+type FontEntry = Partial<Record<'ttf' | 'woff2', AssetInfo>>
+
+interface ReleasePayload {
+  readonly ready: boolean
+  readonly nWoff2: number
+  readonly tag: string
+  readonly version: string
+  readonly htmlUrl: string
+  readonly publishedAt: string | null
+  readonly zipCount: number
+  readonly looseCount: number
+  readonly fonts: Record<Variant, Partial<Record<string, FontEntry>>>
+  readonly zips: Record<'centered' | 'scaled' | 'centeredWoff' | 'scaledWoff', AssetInfo | null>
+  readonly ofl: AssetInfo | null
+  readonly error: string | null
 }
 
 interface BuildInfoItem {
@@ -72,18 +94,55 @@ const CJK_SAMPLES: readonly CjkSample[] = [
  * CJK SC（同源设计）按 usWeightClass 就近映射，平手取更重档。
  */
 const WEIGHT_LIST: readonly WeightDef[] = [
-  { name: 'Thin', css: 100, cjk: 'CJK ← Sans Thin', ttfSize: '12.6MB', woff2Size: '4.2MB' },
-  { name: 'ExtraLight', css: 200, cjk: 'CJK ← Sans Light', ttfSize: '12.6MB', woff2Size: '4.7MB' },
-  { name: 'Light', css: 300, cjk: 'CJK ← Sans Light', ttfSize: '12.6MB', woff2Size: '4.7MB' },
-  { name: 'Regular', css: 400, cjk: 'CJK ← 等宽 Regular', ttfSize: '12.5MB', woff2Size: '4.9MB' },
-  { name: 'Medium', css: 500, cjk: 'CJK ← Sans Medium', ttfSize: '12.4MB', woff2Size: '5.0MB' },
-  { name: 'SemiBold', css: 600, cjk: 'CJK ← 等宽 Bold', ttfSize: '12.3MB', woff2Size: '5.0MB' },
-  { name: 'Bold', css: 700, cjk: 'CJK ← 等宽 Bold', ttfSize: '12.3MB', woff2Size: '5.0MB' },
-  { name: 'ExtraBold', css: 800, cjk: 'CJK ← Sans Black', ttfSize: '12.2MB', woff2Size: '4.9MB' },
+  { name: 'Thin', css: 100, cjk: 'CJK ← Sans Thin' },
+  { name: 'ExtraLight', css: 200, cjk: 'CJK ← Sans Light' },
+  { name: 'Light', css: 300, cjk: 'CJK ← Sans Light' },
+  { name: 'Regular', css: 400, cjk: 'CJK ← 等宽 Regular' },
+  { name: 'Medium', css: 500, cjk: 'CJK ← Sans Medium' },
+  { name: 'SemiBold', css: 600, cjk: 'CJK ← 等宽 Bold' },
+  { name: 'Bold', css: 700, cjk: 'CJK ← 等宽 Bold' },
+  { name: 'ExtraBold', css: 800, cjk: 'CJK ← Sans Black' },
 ]
+
+const CSS_OF_WEIGHT: Readonly<Record<string, number>> = Object.fromEntries(
+  WEIGHT_LIST.map((w) => [w.name, w.css]),
+)
+
+/** 急加载字重（页面主文案），其余字重后台按需加载 */
+const EAGER_WEIGHTS: readonly string[] = ['Regular', 'Bold']
+
+const VARIANT_INFO: Record<
+  Variant,
+  { cap: string; label: string; tagline: string; desc: string }
+> = {
+  centered: {
+    cap: 'Centered',
+    label: '居中版',
+    tagline: '默认 / 推荐',
+    desc: 'CJK 轮廓不缩放，保持思源等宽原始 1000u 设计与字面观感（"中"墨高 ~919u），设计盒水平居中于 1200u 全角格；全部墨迹在 JBM 纵向度量（1020/-300）之内。',
+  },
+  scaled: {
+    cap: 'Scaled',
+    label: '缩放版',
+    tagline: '满格派',
+    desc: 'CJK 轮廓双轴 ×1.2 放大填满 1200u 全角格（"中"墨高 ~1103u，比上游高 20%），更接近传统中文字体的字面率；汉字顶部会略超出拉丁上伸部，属该方案已知取舍。',
+  },
+}
+
+const RELEASE_REPO_URL = 'https://github.com/QZLin/JetHanMono'
 
 /** 卡片 4 构建配方信息 */
 const BUILD_INFO: readonly BuildInfoItem[] = [
+  {
+    label: '发行结构：4 压缩包 + 32 散装字体',
+    detail:
+      'Centered / Scaled 各出 TTF 与 WOFF2 压缩包，包内字体文件不带变体后缀；散装字体文件名带 -Centered/-Scaled 后缀，内容与包内一致',
+  },
+  {
+    label: '预览字体来自 GitHub Latest Release',
+    detail:
+      '页面启动时经 /api/release 读取最新发布的散装 woff2 资产（经同源代理注入 FontFace，规避 GitHub 资产下载无 CORS 头的限制），切换方案即时换源',
+  },
   {
     label: 'JetBrains Mono v2.304',
     detail: '英文 / 代码字形来源，8 档罗马字重（Thin 100 → ExtraBold 800）全部优先',
@@ -102,7 +161,7 @@ const BUILD_INFO: readonly BuildInfoItem[] = [
   },
   {
     label: '等宽网格 2:1（中文 1200u）',
-    detail: '拉丁 600u，中文/全角/谚文拉宽至 1200u = 2×600；字形不缩放、居中留白，终端 1 汉字恰占 2 英文格',
+    detail: '拉丁 600u，中文/全角/谚文拉宽至 1200u = 2×600；字形不缩放居中（Centered）或 ×1.2 填满（Scaled），终端 1 汉字恰占 2 英文格',
   },
   {
     label: '命名 JetHan Mono（不可叫 JetBrains-Source-Han-Mono）',
@@ -117,70 +176,166 @@ const BUILD_INFO: readonly BuildInfoItem[] = [
     detail: '每档字重独立校验：拼合前后 shaping 一致性 + 区块级宽度不变量（宽格 1200 / 半角 600）',
   },
   {
-    label: 'Windows (Git Bash / MSYS2) 可直接构建',
-    detail: '脚本自带 CRLF 自愈守卫、自动定位 python、无 unzip 时 zipfile 兜底',
-  },
-  {
     label: 'CI: GitHub Actions build-font',
-    detail: 'font-build 变更自动构建 8 档字重并上传产物，手动 dispatch 可发 Release',
+    detail: 'font-build 变更自动构建 8 档字重双方案并上传产物，手动 dispatch 可发 Release（测试为发布质量门槛，默认勾选）',
   },
 ]
 
 const HEADER_BADGES: readonly { readonly text: string; readonly className: string }[] = [
   { text: 'calt 连字 ✓', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+  { text: '双方案 Centered / Scaled', className: 'border-amber-200 bg-amber-50 text-amber-700' },
   { text: '8 档字重', className: 'border-amber-200 bg-amber-50 text-amber-700' },
   { text: 'CJK ~44,000 码位', className: 'border-amber-200 bg-amber-50 text-amber-700' },
-  { text: '中英混排 ✓', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
   { text: '终端 2:1 等宽 ✓', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
   { text: 'OFL-1.1', className: 'border-zinc-200 bg-zinc-50 text-zinc-600' },
 ]
+
+function fmtMB(bytes: number): string {
+  return `${(bytes / 1048576).toFixed(1)}MB`
+}
 
 export default function Home() {
   const [compareMode, setCompareMode] = useState<boolean>(false)
   const [caltOn, setCaltOn] = useState<boolean>(true)
   const [ligaOn, setLigaOn] = useState<boolean>(true)
+  const [variant, setVariant] = useState<Variant>('centered')
   const [fontStatus, setFontStatus] = useState<FontStatus>('loading')
 
-  // 字体预加载：仅在客户端 useEffect 中执行，避免 hydration mismatch。
-  // 只急加载 Regular/Bold 两档（页面主文案），其余字重由浏览器按需加载
+  const [release, setRelease] = useState<ReleasePayload | null>(null)
+  const [releaseStatus, setReleaseStatus] = useState<ReleaseStatus>('loading')
+  const [releaseError, setReleaseError] = useState<string | null>(null)
+  const [weightReady, setWeightReady] = useState<Record<string, boolean>>({})
+
+  // 已注入 document.fonts 的 FontFace 句柄（切方案时整体卸载）
+  const loadedFacesRef = useRef<FontFace[]>([])
+  const loadEpochRef = useRef(0)
+
+  // ---- 拉取 Latest Release 元数据 ----
+  // 注意：所有 setState 都在 await 之后（异步路径），不落在 effect 同步执行路径
+  const fetchRelease = useCallback(async () => {
+    try {
+      const res = await fetch('/api/release', { cache: 'no-store' })
+      const data = (await res.json()) as ReleasePayload
+      if (!res.ok || !data.ready) {
+        // 完整载荷（旧格式 Release）保留给下载卡片用；纯错误响应置空
+        setRelease(data.tag !== undefined ? data : null)
+        setReleaseStatus('error')
+        setReleaseError(data.error ?? `获取 Release 失败 (HTTP ${res.status})`)
+        return
+      }
+      setRelease(data)
+      setReleaseStatus('ready')
+    } catch {
+      setRelease(null)
+      setReleaseStatus('error')
+      setReleaseError('网络错误，无法获取 Release 信息')
+    }
+  }, [])
+
+  // 重试按钮（事件处理器内同步 setState 无碍）
+  const retryAll = useCallback(() => {
+    setReleaseStatus('loading')
+    setReleaseError(null)
+    setFontStatus('loading')
+    void fetchRelease()
+  }, [fetchRelease])
+
   useEffect(() => {
     let cancelled = false
+    void (async () => {
+      // 异步边界后再取数，避免 effect 同步路径触发 setState
+      await Promise.resolve()
+      if (cancelled) return
+      await fetchRelease()
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [fetchRelease])
 
-    async function loadFonts(): Promise<void> {
+  // ---- 按方案加载 woff2（Regular/Bold 急加载 -> 其余字重后台队列） ----
+  useEffect(() => {
+    if (!release || !release.ready || typeof window === 'undefined') return
+    const epoch = ++loadEpochRef.current
+
+    // 同步部分只触碰外部系统（document.fonts：卸载上一方案注入的 FontFace）
+    for (const face of loadedFacesRef.current) {
       try {
-        if (typeof document === 'undefined' || !('fonts' in document)) {
-          throw new Error('FontFaceSet API not supported')
-        }
-        await Promise.all([
-          document.fonts.load('16px "JetHan Mono"'),
-          document.fonts.load('700 16px "JetHan Mono"'),
-        ])
-        await document.fonts.ready
-        if (!cancelled) {
-          setFontStatus('loaded')
-        }
+        document.fonts.delete(face)
       } catch {
-        if (!cancelled) {
-          setFontStatus('error')
-        }
+        /* ignore */
       }
     }
+    loadedFacesRef.current = []
 
-    void loadFonts()
+    let cancelled = false
+    void (async () => {
+      // 异步边界之后才 setState：避免 effect 同步路径引发级联渲染
+      await Promise.resolve()
+      if (cancelled || loadEpochRef.current !== epoch) return
+      setWeightReady({})
+      setFontStatus('loading')
+
+      const loadOne = async (name: string): Promise<boolean> => {
+        const asset = release?.fonts[variant][name]?.woff2
+        if (!asset) return false
+        try {
+          const face = new FontFace(
+            'JetHan Mono',
+            `url("/api/font-asset?name=${encodeURIComponent(asset.name)}")`,
+            { weight: String(CSS_OF_WEIGHT[name] ?? 400), display: 'swap' },
+          )
+          document.fonts.add(face)
+          await face.load()
+          if (loadEpochRef.current !== epoch) {
+            // 加载期间方案已被再次切换：丢弃本次结果
+            try {
+              document.fonts.delete(face)
+            } catch {
+              /* ignore */
+            }
+            return false
+          }
+          loadedFacesRef.current.push(face)
+          setWeightReady((prev) => ({ ...prev, [name]: true }))
+          return true
+        } catch {
+          return false
+        }
+      }
+
+      // 第一阶段：急加载字重决定整体状态
+      let eagerFailed = false
+      for (const name of EAGER_WEIGHTS) {
+        if (cancelled || loadEpochRef.current !== epoch) return
+        const ok = await loadOne(name)
+        if (!ok) eagerFailed = true
+      }
+      if (cancelled || loadEpochRef.current !== epoch) return
+      setFontStatus(eagerFailed ? 'error' : 'loaded')
+
+      // 第二阶段：其余字重顺序后台加载（浏览器并行缓存，页面按需渲染）
+      for (const w of WEIGHT_LIST) {
+        if (EAGER_WEIGHTS.includes(w.name)) continue
+        if (cancelled || loadEpochRef.current !== epoch) return
+        await loadOne(w.name)
+      }
+    })()
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [release, variant])
 
-  // 对比模式：所有演示文本在 JetHan Mono 与系统等宽之间切换
   const monoFontClass: MonoFontClass = compareMode ? 'font-sysmono' : 'font-jethan'
 
-  // 连字开关：calt 走 fontFeatureSettings，liga 走 fontVariantLigatures
   const ligatureStyle: CSSProperties = {
     fontFeatureSettings: caltOn ? '"calt" 1' : '"calt" 0',
     fontVariantLigatures: ligaOn ? 'normal' : 'none',
   }
+
+  const eagerNames = EAGER_WEIGHTS.map((n) => `JetHanMono-${n}-${VARIANT_INFO[variant].cap}.woff2`).join(' / ')
+  const info = VARIANT_INFO[variant]
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -221,12 +376,91 @@ export default function Home() {
           </div>
         </header>
 
+        {/* ===================== CJK 方案切换 ===================== */}
+        <section aria-label="CJK 几何方案切换">
+          <Card>
+            <CardContent className="space-y-4">
+              <div
+                className="grid gap-3 sm:grid-cols-2"
+                role="radiogroup"
+                aria-label="选择 CJK 几何方案"
+              >
+                {(Object.keys(VARIANT_INFO) as Variant[]).map((v) => {
+                  const vi = VARIANT_INFO[v]
+                  const selected = variant === v
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setVariant(v)}
+                      className={cn(
+                        'flex flex-col gap-1 rounded-xl border p-4 text-left transition-colors',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        selected
+                          ? 'border-primary bg-primary/5 shadow-sm'
+                          : 'bg-card hover:bg-muted/50',
+                      )}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={cn('font-jethan text-base font-semibold')}>
+                          {vi.label} {vi.cap}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={
+                            v === 'centered'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-amber-200 bg-amber-50 text-amber-700'
+                          }
+                        >
+                          {vi.tagline}
+                        </Badge>
+                        {selected && (
+                          <Check className="ml-auto size-4 text-primary" aria-hidden="true" />
+                        )}
+                      </span>
+                      <span className="text-xs leading-relaxed text-muted-foreground">
+                        {vi.desc}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                两方案字体内名完全相同（JetHan Mono），仅 CJK 几何不同；预览渲染与下载链接跟随所选方案，
+                woff2 实时取自 GitHub Latest Release 散装资产。
+              </p>
+            </CardContent>
+          </Card>
+        </section>
+
         {/* ===================== 字体加载状态 ===================== */}
         <section aria-label="字体加载状态" aria-live="polite">
-          {fontStatus === 'loading' ? (
+          {releaseStatus === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-              <span>正在加载字体（Regular / Bold woff2），首次加载需要一些时间，其余字重按需加载…</span>
+              <span>正在获取 GitHub Latest Release 信息…</span>
+            </div>
+          ) : releaseStatus === 'error' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="border-amber-200 bg-amber-100 text-amber-800">
+                Release 加载失败
+              </Badge>
+              <span className="text-sm text-muted-foreground">{releaseError}</span>
+              <Button variant="outline" size="sm" onClick={retryAll}>
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                重试
+              </Button>
+            </div>
+          ) : fontStatus === 'loading' ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              <span>
+                正在从 Release {release?.tag} 加载字体（{info.label} {info.cap} · Regular / Bold
+                优先，其余字重后台按需加载）…
+              </span>
             </div>
           ) : fontStatus === 'loaded' ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -234,17 +468,20 @@ export default function Home() {
                 字体加载完成
               </Badge>
               <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
-                Regular / Bold 已就绪 · 其余 6 档字重按需加载 · woff2
+                Release {release?.tag} · {info.label} {info.cap} · Regular / Bold 已就绪 · 其余 6
+                档字重后台加载 · woff2
               </Badge>
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className="border-amber-200 bg-amber-100 text-amber-800">
-                字体加载失败
-              </Badge>
+              <Badge className="border-amber-200 bg-amber-100 text-amber-800">字体加载失败</Badge>
               <span className="text-sm text-muted-foreground">
-                页面已回退到系统等宽字体，请检查网络后刷新重试。
+                页面已回退到系统等宽字体（{eagerNames}），请检查网络后重试。
               </span>
+              <Button variant="outline" size="sm" onClick={retryAll}>
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                重试
+              </Button>
             </div>
           )}
         </section>
@@ -375,8 +612,10 @@ export default function Home() {
               <p className="text-xs leading-relaxed text-muted-foreground">
                 两行横条严格等长（20 英文格 = 10 中文格 = 12em）：中文步进由上游的 1.0em 拉宽到
                 1.2em（= 2 × 0.6em），恰好 1 汉字占 2 英文格，终端与编辑器中英混排严格对齐同一网格。
-                字形本身不缩放，居中留白（汉字两侧各 ~100u），中文观感略松；半角片假名等窄字符吸附到
-                0.6em，与英文同宽。
+                {variant === 'centered'
+                  ? '当前方案（居中版）字形本身不缩放，居中留白（汉字两侧各 ~100u），中文观感略松。'
+                  : '当前方案（缩放版）字形双轴 ×1.2 放大填满 1.2em 格，字面更满，步进与居中版完全一致。'}
+                半角片假名等窄字符吸附到 0.6em，与英文同宽。
               </p>
             </CardContent>
           </Card>
@@ -407,6 +646,12 @@ export default function Home() {
                       <Badge variant="secondary">
                         {sample.name} {sample.css}
                       </Badge>
+                      {!weightReady[sample.name] && release?.ready && (
+                        <LoaderCircle
+                          className="size-3.5 animate-spin text-muted-foreground"
+                          aria-label={`${sample.name} 字重加载中`}
+                        />
+                      )}
                       <Badge
                         variant="outline"
                         className="border-zinc-200 bg-zinc-50 text-xs text-zinc-600"
@@ -440,64 +685,127 @@ export default function Home() {
           <Card>
             <CardHeader>
               <CardTitle>下载与构建信息</CardTitle>
-              <CardDescription>每档字重提供 ttf（桌面安装）与 woff2（Web）两种格式。</CardDescription>
+              <CardDescription>
+                资产实时来自 GitHub Latest Release{release ? `（${release.tag}）` : ''}：
+                4 个压缩包 + 全部散装字体；压缩包内文件不带变体后缀，散装文件带 -Centered/-Scaled 后缀。
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* 按字重分行：ttf / woff2 双格式下载 */}
-              <div className="space-y-2" aria-label="字体文件下载">
-                {WEIGHT_LIST.map((w) => (
-                  <div
-                    key={w.name}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3"
-                  >
-                    <span className="font-jethan text-sm font-semibold">
-                      JetHanMono-{w.name}
-                    </span>
-                    <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
-                      {w.css}
-                    </Badge>
-                    <span className="hidden text-xs text-muted-foreground lg:inline">{w.cjk}</span>
-                    <div className="ml-auto flex flex-wrap gap-2">
-                      <Button asChild variant="outline" size="sm">
-                        <a
-                          href={`/fonts/JetHanMono-${w.name}.ttf`}
-                          download={`JetHanMono-${w.name}.ttf`}
-                          aria-label={`下载 JetHanMono-${w.name}.ttf（${w.ttfSize}）`}
-                        >
-                          <Download className="size-3.5" aria-hidden="true" />
-                          <span className="font-jethan">ttf</span>
-                          <span className="text-xs text-muted-foreground">{w.ttfSize}</span>
-                        </a>
-                      </Button>
-                      <Button asChild variant="outline" size="sm">
-                        <a
-                          href={`/fonts/JetHanMono-${w.name}.woff2`}
-                          download={`JetHanMono-${w.name}.woff2`}
-                          aria-label={`下载 JetHanMono-${w.name}.woff2（${w.woff2Size}）`}
-                        >
-                          <Download className="size-3.5" aria-hidden="true" />
-                          <span className="font-jethan">woff2</span>
-                          <span className="text-xs text-muted-foreground">{w.woff2Size}</span>
-                        </a>
-                      </Button>
+              {/* 压缩包：4 个 */}
+              <div className="space-y-2" aria-label="压缩包下载">
+                <p className="text-sm font-medium text-muted-foreground">压缩包（包内无变体后缀）</p>
+                {(
+                  [
+                    { key: 'centered', name: `JetHanMono-${release?.version ?? '<版本>'}-Centered.zip`, desc: '居中版 TTF · 桌面安装（8 字重）' },
+                    { key: 'scaled', name: `JetHanMono-${release?.version ?? '<版本>'}-Scaled.zip`, desc: '缩放版 TTF · 桌面安装（8 字重）' },
+                    { key: 'centeredWoff', name: `JetHanMono-${release?.version ?? '<版本>'}-Centered_woff.zip`, desc: '居中版 WOFF2 · Web（8 字重）' },
+                    { key: 'scaledWoff', name: `JetHanMono-${release?.version ?? '<版本>'}-Scaled_woff.zip`, desc: '缩放版 WOFF2 · Web（8 字重）' },
+                  ] as const
+                ).map(({ key, name, desc }) => {
+                  const asset = release?.zips[key] ?? null
+                  return (
+                    <div
+                      key={key}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3"
+                    >
+                      <span className="font-jethan text-sm font-semibold">{asset?.name ?? name}</span>
+                      <span className="hidden text-xs text-muted-foreground lg:inline">{desc}</span>
+                      <div className="ml-auto flex gap-2">
+                        {asset ? (
+                          <Button asChild variant="outline" size="sm">
+                            <a
+                              href={asset.url}
+                              download={asset.name}
+                              aria-label={`下载 ${asset.name}（${fmtMB(asset.size)}）`}
+                            >
+                              <Download className="size-3.5" aria-hidden="true" />
+                              <span className="font-jethan">zip</span>
+                              <span className="text-xs text-muted-foreground">{fmtMB(asset.size)}</span>
+                            </a>
+                          </Button>
+                        ) : (
+                          <Button variant="outline" size="sm" disabled>
+                            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                            <span className="font-jethan">zip</span>
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
+              </div>
 
-                {/* 源码包（构建管线 + 工具 + CI，不含字体二进制） */}
+              {/* 散装字体：按当前方案分行，文件名带变体后缀 */}
+              <div className="space-y-2" aria-label="散装字体下载">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    散装字体（文件名带 -{info.cap} 后缀 · 内容与压缩包内一致）
+                  </p>
+                  {!release?.ready && (
+                    <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
+                      {releaseStatus === 'loading' ? '加载中…' : '需要 1.004+ Release'}
+                    </Badge>
+                  )}
+                </div>
+                {WEIGHT_LIST.map((w) => {
+                  const entry = release?.fonts[variant][w.name]
+                  const cap = info.cap
+                  return (
+                    <div
+                      key={w.name}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3"
+                    >
+                      <span className="font-jethan text-sm font-semibold">
+                        JetHanMono-{w.name}-{cap}
+                      </span>
+                      <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
+                        {w.css}
+                      </Badge>
+                      <span className="hidden text-xs text-muted-foreground lg:inline">{w.cjk}</span>
+                      <div className="ml-auto flex flex-wrap gap-2">
+                        {(['ttf', 'woff2'] as const).map((fmt) => {
+                          const asset = entry?.[fmt]
+                          return asset ? (
+                            <Button asChild key={fmt} variant="outline" size="sm">
+                              <a
+                                href={asset.url}
+                                download={asset.name}
+                                aria-label={`下载 ${asset.name}（${fmtMB(asset.size)}）`}
+                              >
+                                <Download className="size-3.5" aria-hidden="true" />
+                                <span className="font-jethan">{fmt}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {fmtMB(asset.size)}
+                                </span>
+                              </a>
+                            </Button>
+                          ) : (
+                            <Button variant="outline" size="sm" disabled key={fmt}>
+                              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                              <span className="font-jethan">{fmt}</span>
+                            </Button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* 源代码 */}
                 <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed p-3">
-                  <span className="font-jethan text-sm font-semibold">JetHanMono-src.zip</span>
+                  <span className="font-jethan text-sm font-semibold">源代码 · QZLin/JetHanMono</span>
                   <span className="hidden text-xs text-muted-foreground lg:inline">
-                    源码包 — 构建管线 + 工具脚本 + CI（不含字体）
+                    构建管线 + 工具脚本 + CI（不含字体二进制）
                   </span>
                   <Button asChild variant="outline" size="sm" className="ml-auto">
                     <a
-                      href="/JetHanMono-src.zip"
-                      download="JetHanMono-src.zip"
-                      aria-label="下载 JetHanMono-src.zip 源码包"
+                      href={RELEASE_REPO_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="打开 GitHub 仓库"
                     >
-                      <Download className="size-3.5" aria-hidden="true" />
-                      <span className="font-jethan">zip</span>
+                      <ExternalLink className="size-3.5" aria-hidden="true" />
+                      <span className="font-jethan">GitHub</span>
                     </a>
                   </Button>
                 </div>
@@ -510,8 +818,8 @@ export default function Home() {
                   </span>
                   <Button asChild variant="outline" size="sm" className="ml-auto">
                     <a
-                      href="/fonts/JetHanMono-OFL.txt"
-                      download="JetHanMono-OFL.txt"
+                      href={release?.ofl?.url ?? `${RELEASE_REPO_URL}/releases/latest`}
+                      download={release?.ofl?.name ?? 'JetHanMono-OFL.txt'}
                       aria-label="下载 JetHanMono-OFL.txt"
                     >
                       <Download className="size-3.5" aria-hidden="true" />
@@ -542,7 +850,7 @@ export default function Home() {
       {/* ===================== Footer（sticky footer） ===================== */}
       <footer className="mt-auto border-t">
         <div className="mx-auto w-full max-w-4xl px-4 py-6 text-center text-sm text-muted-foreground">
-          JetHan Mono · 基于 JetBrains Mono 与思源等宽拼合 · 8 档字重 · SIL OFL 1.1 许可
+          JetHan Mono · 基于 JetBrains Mono 与思源等宽拼合 · 8 档字重 · 双方案 · SIL OFL 1.1 许可
         </div>
       </footer>
     </div>

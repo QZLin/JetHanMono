@@ -65,7 +65,9 @@ sys.path.insert(0, HERE)
 from os2_ranges import OS2_RANGES  # noqa: E402  (generated, same dir)
 
 FAMILY = "JetHan Mono"
-VERSION = "1.003"   # 1.003: 居中/缩放双变体分包发布 (字体内名不变); 1.002: v3 几何定版
+VERSION = "1.004"   # 1.004: 发行重构 -- 4 压缩包 (居中/缩放 x ttf/woff2, 包内无后缀)
+                    #        + 32 个散装字体资产 (文件名带 -Centered/-Scaled 后缀);
+                    # 1.003: 居中/缩放双变体分包发布 (字体内名不变); 1.002: v3 几何定版
                     # (CJK 不缩放+水平居中, 回退 v2 x1.2); 1.001: 补齐元数据
 BUILDER = "fontbuild"
 
@@ -126,9 +128,11 @@ DESIGNER = (
 DESCRIPTION = (
     "Merged monospace font: JetBrains Mono glyphs (Latin, code, programming "
     "ligatures) take priority; Source Han Mono glyphs fill Chinese/CJK. "
-    "Ligatures via JetBrains GSUB (calt) preserved; CJK advances scaled to "
-    "1200/1000em = exactly 2x the Latin 600u advance (terminal 2:1), "
-    "ink centered with symmetric side bearings."
+    "Ligatures via JetBrains GSUB (calt) preserved; CJK advances snapped to "
+    "1200/1000em = exactly 2x the Latin 600u advance (terminal 2:1). "
+    "Two CJK geometry variants ship per release under the same family name: "
+    "Centered (unscaled outlines, centered in the 1200u cell) and Scaled "
+    "(outlines x1.2 to fill the cell)."
 )
 
 # IDs we fully control (rebuilt from scratch below); 8/11 vendor identity

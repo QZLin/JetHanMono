@@ -10,9 +10,10 @@ name: Metadata Audit
 #   - schedule: 每周一 03:23 UTC 审计最新 Release (漂移检测)
 #   - release: 发布/重发布事件自动审计刚分发的资产
 #
-# 审计对象: Release 的两个方案压缩包 (JetHanMono-*-Centered/-Scaled.zip,
-# 1.002 及更早版本为散装 ttf/woff2) + OFL.txt; 每个压缩包独立解包审计
-# (各含 ttf/ + woff2/ + OFL, 8 字重完整性按包内检查)
+# 审计对象: Release 的全部方案压缩包 (1.004+: Centered/Scaled TTF 包 +
+# Centered_woff/Scaled_woff WOFF2 包, 字体平铺在包根; 1.003 为 ttf/+woff2/
+# 布局; 1.002 及更早为散装 ttf/woff2) + OFL.txt; 每个压缩包独立解包审计,
+# 字重完整性按包内检查 (TTF 包 8 ttf, WOFF2 包 8 woff2)
 # 结果: 任何 FAIL -> job 失败; 报告上传为 workflow artifact。
 
 on:
@@ -80,8 +81,8 @@ jobs:
           rm -rf unpacked && mkdir unpacked
           shopt -s nullglob
           zips=(dist/JetHanMono-*.zip)
-          if [ "${#zips[@]}" -eq 0 ]; then
-            echo "ERROR: Release 中未找到 JetHanMono-*.zip 压缩包" >&2
+          if [ "${#zips[@]}" -lt 4 ]; then
+            echo "ERROR: Release 中 JetHanMono-*.zip 少于 4 个 (1.004+ 应为 Centered/Scaled/Centered_woff/Scaled_woff)" >&2
             exit 1
           fi
           for z in "${zips[@]}"; do
@@ -93,10 +94,18 @@ jobs:
             ofl="$d/JetHanMono-OFL.txt"
             test -s "$ofl" || ofl="$d/ttf/JetHanMono-OFL.txt"
             test -s "$ofl" || { echo "ERROR: $name 内未找到 OFL.txt" >&2; exit 1; }
-            echo "== 审计 $name (ttf + woff2 + OFL) =="
-            python3 font-build/tools/audit_metadata.py \
-              "$d/ttf" "$d/woff2" "$ofl" \
-              --report "metadata-audit-report-${name}.json"
+            echo "== 审计 $name =="
+            if [ -d "$d/ttf" ]; then
+              # 1.003 旧布局: ttf/ + woff2/ 目录
+              python3 font-build/tools/audit_metadata.py \
+                "$d/ttf" "$d/woff2" "$ofl" \
+                --report "metadata-audit-report-${name}.json"
+            else
+              # 1.004+ 布局: 字体平铺在包根 (audit_metadata.py 自动识别 ttf/woff2/OFL)
+              python3 font-build/tools/audit_metadata.py \
+                "$d" "$ofl" \
+                --report "metadata-audit-report-${name}.json"
+            fi
           done
 
       - name: 上传审计报告

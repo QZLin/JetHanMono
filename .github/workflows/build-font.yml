@@ -20,10 +20,17 @@ name: Build JetHan Mono
 #   test    verify.py 静态度量 + invariant_test.py 全字形 JBM 保真
 #           + shape_test.py HarfBuzz 塑形, 双变体 x 8 字重
 #           (--verify-only 模式: 下载 build 产物 + 上游缓存作对比基准)
-#   release 打包两套方案压缩包并发布:
-#           JetHanMono-<版本>-Centered.zip / -Scaled.zip,
-#           各含 ttf/ + woff2/ (8 字重) + OFL; 字体内名两套完全一致,
-#           散装字体资产不再单独发布 (同名会冲突, 压缩包即“两套字体”)
+#   release 打包并发布 4 个压缩包 + 全部散装字体:
+#           JetHanMono-<版本>-Centered.zip      居中版 TTF (8 字重) + OFL
+#           JetHanMono-<版本>-Scaled.zip        缩放版 TTF (8 字重) + OFL
+#           JetHanMono-<版本>-Centered_woff.zip 居中版 WOFF2 (8 字重) + OFL
+#           JetHanMono-<版本>-Scaled_woff.zip   缩放版 WOFF2 (8 字重) + OFL
+#           压缩包内字体文件不带变体后缀 (JetHanMono-Bold.ttf/.woff2),
+#           平铺在包根, 解压即用。
+#           另发布全部 32 个散装字体 (8 字重 x 2 方案 x ttf/woff2),
+#           文件名带 -Centered/-Scaled 后缀 (JetHanMono-Bold-Centered.ttf),
+#           内容与包内完全一致, 便于免解包下载单档字重;
+#           预览站从 Latest Release 动态加载散装 woff2 (经服务端代理)。
 #
 # 上游字体缓存:
 #   JetBrains Mono + Noto CJK 源字体 (~140MB) 存入 actions/cache;
@@ -237,25 +244,60 @@ jobs:
           name: JetHanMono-fonts
           path: dist
 
-      - name: 打包两套方案压缩包 (各含 ttf/ + woff2/ + OFL, 文件名带版本号)
+      - name: 打包 4 个压缩包 + 散装字体 (包内无后缀 / 散装带 -Centered/-Scaled 后缀)
         env:
           TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
         run: |
-          VERSION="${TAG#jethan-v}"   # jethan-v1.003 -> 1.003; 前缀不符时原样保留
+          set -euo pipefail
+          VERSION="${TAG#jethan-v}"   # jethan-v1.004 -> 1.004; 前缀不符时原样保留
+          ROOT="$PWD"
+          mkdir -p pkg dist
+
+          # ---- 4 个压缩包: 字体不带变体后缀, 平铺在包根 + 根级 OFL ----
           for V in centered scaled; do
-            VCAP="${V^}"                # Centered / Scaled
-            mkdir -p "pkg/$V/ttf" "pkg/$V/woff2"
-            cp dist/$V/JetHanMono-*.ttf dist/$V/JetHanMono-OFL.txt "pkg/$V/ttf/"
-            cp dist/$V/JetHanMono-*.woff2 dist/$V/JetHanMono-OFL.txt "pkg/$V/woff2/"
-            # 根级 OFL (zip -r 对不存在的名字只警告不报错, 这里显式确保存在)
-            cp dist/$V/JetHanMono-OFL.txt "pkg/$V/JetHanMono-OFL.txt"
-            test -s "pkg/$V/JetHanMono-OFL.txt"
-            ( cd "pkg/$V" && zip -r "$OLDPWD/dist/JetHanMono-${VERSION}-${VCAP}.zip" \
-                ttf woff2 JetHanMono-OFL.txt )
+            VCAP="${V^}"                          # Centered / Scaled
+            STAGE="pkg/$V-ttf"
+            mkdir -p "$STAGE"
+            cp dist/$V/JetHanMono-*.ttf dist/$V/JetHanMono-OFL.txt "$STAGE/"
+            ( cd "$STAGE" && zip -q "$ROOT/dist/JetHanMono-${VERSION}-${VCAP}.zip" \
+                JetHanMono-*.ttf JetHanMono-OFL.txt )
+            STAGE="pkg/$V-woff"
+            mkdir -p "$STAGE"
+            cp dist/$V/JetHanMono-*.woff2 dist/$V/JetHanMono-OFL.txt "$STAGE/"
+            ( cd "$STAGE" && zip -q "$ROOT/dist/JetHanMono-${VERSION}-${VCAP}_woff.zip" \
+                JetHanMono-*.woff2 JetHanMono-OFL.txt )
+          done
+
+          # ---- 散装字体: 全部 8 字重 x 2 方案 x ttf/woff2, 文件名带方案后缀 ----
+          for V in centered scaled; do
+            VCAP="${V^}"
+            for f in dist/$V/JetHanMono-*.ttf; do
+              cp "$f" "dist/$(basename "$f" .ttf)-${VCAP}.ttf"
+            done
+            for f in dist/$V/JetHanMono-*.woff2; do
+              cp "$f" "dist/$(basename "$f" .woff2)-${VCAP}.woff2"
+            done
           done
           cp dist/centered/JetHanMono-OFL.txt dist/
-          echo "== Release 资产清单 ($VERSION) =="
-          ls -la dist/JetHanMono-*.zip dist/JetHanMono-OFL.txt
+
+          # ---- 完整性断言: 4 zip + 16 ttf + 16 woff2 + OFL = 37 资产 ----
+          N_ZIP=$(ls dist/JetHanMono-*.zip | wc -l)
+          N_TTF=$(ls dist/JetHanMono-*-Centered.ttf dist/JetHanMono-*-Scaled.ttf | wc -l)
+          N_WOFF=$(ls dist/JetHanMono-*-Centered.woff2 dist/JetHanMono-*-Scaled.woff2 | wc -l)
+          test "$N_ZIP" = "4"  || { echo "ERROR: 压缩包数量 $N_ZIP != 4"; exit 1; }
+          test "$N_TTF" = "16" || { echo "ERROR: 散装 ttf 数量 $N_TTF != 16"; exit 1; }
+          test "$N_WOFF" = "16" || { echo "ERROR: 散装 woff2 数量 $N_WOFF != 16"; exit 1; }
+          test -s dist/JetHanMono-OFL.txt
+          # 包内无后缀抽查: 每包恰好 8 字体 + 1 OFL = 9 项, 且不带 -Centered/-Scaled
+          for Z in dist/JetHanMono-*.zip; do
+            N=$(unzip -Z1 "$Z" | grep -c 'JetHanMono-')
+            test "$N" = "9" || { echo "ERROR: $Z 条目数 $N != 9"; unzip -Z1 "$Z"; exit 1; }
+            if unzip -Z1 "$Z" | grep -E -- '-(Centered|Scaled)\.(ttf|woff2)$'; then
+              echo "ERROR: $Z 包内文件不应带变体后缀"; exit 1
+            fi
+          done
+          echo "== Release 资产清单 ($VERSION, 共 $((N_ZIP + N_TTF + N_WOFF + 1)) 项) =="
+          ls -la dist/JetHanMono-*.zip dist/JetHanMono-*.ttf dist/JetHanMono-*.woff2 dist/JetHanMono-OFL.txt
 
       - name: 创建 Release
         uses: softprops/action-gh-release@v3
@@ -267,16 +309,33 @@ jobs:
             JetHan Mono — JetBrains Mono × 思源等宽 拼合字体（居中 / 缩放 双方案）
 
             自 1.003 起提供两套 CJK 几何方案, **字体内部名称完全一致**（均为 JetHan Mono）,
-            按需**二选一**下载安装（同名家族请勿同时安装, 会互相覆盖）:
+            按需**二选一**下载安装（同名家族请勿同时安装, 会互相覆盖）。
 
-            - **JetHanMono-<版本>-Centered.zip 居中版（默认 / 推荐）**
-              CJK 轮廓不缩放, 保持思源等宽原始 1000u 设计与字面观感（"中"墨高 ~919u）,
-              设计盒水平居中于 1200u 全角格; 全部墨迹都在 JBM 纵向度量（1020/-300）之内。
-            - **JetHanMono-<版本>-Scaled.zip 缩放版（满格派）**
-              CJK 轮廓双轴 ×1.2 放大填满 1200u 全角格（"中"墨高 ~1103u, 比上游高 20%）,
-              更接近传统中文字体的字面率; 汉字顶部会略超出拉丁上伸部, 属该方案已知取舍。
+            ## 压缩包（4 个, 包内字体文件**不带**变体后缀, 平铺 + OFL, 解压即用）
 
-            每个压缩包内含 `ttf/` 与 `woff2/` 两个目录（8 字重）+ OFL 许可证, 解压即用。
+            | 压缩包 | 方案 | 内容 |
+            |---|---|---|
+            | `JetHanMono-<版本>-Centered.zip` | 居中版（默认 / 推荐） | TTF x 8 字重 + OFL |
+            | `JetHanMono-<版本>-Scaled.zip` | 缩放版（满格派） | TTF x 8 字重 + OFL |
+            | `JetHanMono-<版本>-Centered_woff.zip` | 居中版 | WOFF2 x 8 字重 + OFL（Web） |
+            | `JetHanMono-<版本>-Scaled_woff.zip` | 缩放版 | WOFF2 x 8 字重 + OFL（Web） |
+
+            ## 散装字体（全部 32 个, 文件名**带** `-Centered` / `-Scaled` 后缀）
+
+            - `JetHanMono-<字重>-Centered.ttf` / `JetHanMono-<字重>-Scaled.ttf`
+            - `JetHanMono-<字重>-Centered.woff2` / `JetHanMono-<字重>-Scaled.woff2`
+
+            内容与压缩包内完全一致, 仅文件名加方案后缀便于区分, 需要单档字重时免解包直接下载。
+            预览站即从 Latest Release 动态加载这批 woff2 资产。
+
+            ## 方案差异
+
+            - **居中版 Centered（默认 / 推荐）**: CJK 轮廓不缩放, 保持思源等宽原始 1000u 设计与
+              字面观感（"中"墨高 ~919u）, 设计盒水平居中于 1200u 全角格; 全部墨迹都在 JBM
+              纵向度量（1020/-300）之内。
+            - **缩放版 Scaled（满格派）**: CJK 轮廓双轴 x1.2 放大填满 1200u 全角格（"中"墨高
+              ~1103u, 比上游高 20%）, 更接近传统中文字体的字面率; 汉字顶部会略超出拉丁上伸部,
+              属该方案已知取舍。
 
             - 英文/代码字形: JetBrains Mono v2.304（优先, 含编程连字 calt）
             - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u）
@@ -288,5 +347,9 @@ jobs:
             - 许可: SIL OFL 1.1（思源保留字体名 'Source', 故本衍生字体另取名）
           files: |
             dist/JetHanMono-*.zip
+            dist/JetHanMono-*-Centered.ttf
+            dist/JetHanMono-*-Scaled.ttf
+            dist/JetHanMono-*-Centered.woff2
+            dist/JetHanMono-*-Scaled.woff2
             dist/JetHanMono-OFL.txt
           fail_on_unmatched_files: true

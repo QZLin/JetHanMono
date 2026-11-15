@@ -3,20 +3,34 @@
 JetBrains Mono（拉丁 / 代码 / 编程连字）与思源等宽（Noto Sans Mono CJK SC，中文）拼合的等宽字体。
 
 - **严格 2:1 终端对齐**：拉丁步进 600u/1000em，CJK/全角字形步进吸附为 1200u——1 个汉字恰好等于 2 个英文字符宽，表格与混排对齐零漂移。
-- **双 CJK 方案分包发行**：居中版（默认，轮廓不缩放+留白居中）与缩放版（轮廓 ×1.2 填满全角格）各一个压缩包，字体内名相同，二选一安装。
+- **双 CJK 方案分包发行**：居中版（默认，轮廓不缩放+留白居中）与缩放版（轮廓 ×1.2 填满全角格）各出 TTF 与 WOFF2 两个压缩包，字体内名相同，二选一安装。
 - **JetBrains Mono 优先**：拉丁、符号与 `calt` 编程连字全部取自 JBM；缺失字符回退思源等宽，中文渲染完整。
 - **8 档字重**：Thin 100 / ExtraLight 200 / Light 300 / Regular 400 / Medium 500 / SemiBold 600 / Bold 700 / ExtraBold 800。
+- **预览站动态加载**：预览页从 GitHub Latest Release 实时拉取散装 woff2 资产渲染，无需本地内置字体文件。
 
-## 下载（两种 CJK 方案，二选一）
+## 下载（两种 CJK 方案 x 两种格式，各一个压缩包）
 
-两个方案**字体内部名称完全相同**（均为 JetHan Mono，8 档字重命名也一致），区别仅在 CJK 几何——同名家族**不可同时安装**（会互相覆盖/冲突），按观感偏好二选一：
+两个方案**字体内部名称完全相同**（均为 JetHan Mono，8 档字重命名也一致），区别仅在 CJK 几何——同名家族**不可同时安装**（会互相覆盖/冲突），按观感偏好二选一。
 
-| 发行包（Release 附件） | 方案 | CJK 几何 | 观感 | 适合 |
-|---|---|---|---|---|
-| `JetHanMono-<版本>-Centered.zip` | 居中版（默认 / 推荐） | 轮廓**不缩放**，1000u 设计盒水平居中于 1200u 全角格 | 汉字 = 思源原样字面（"中"墨高 ~919u），留白稍宽，与拉丁 x-height 协调；全部墨迹在 JBM 行高度量（1020/-300）内 | 追求与 JetBrains Mono 完全一致的行高与西文观感 |
-| `JetHanMono-<版本>-Scaled.zip` | 缩放版（满格派） | 轮廓双轴 **×1.2** 放大，设计盒恰好填满 1200u 全角格 | 汉字比上游高 20%（"中"墨高 ~1103u），字面更满，接近传统中文字体；顶部会略超拉丁上伸部 | 喜欢"大汉字"传统排版的用户（v1.001–v1.002 早期风格） |
+**压缩包（4 个）——包内字体文件不带变体后缀，平铺在包根 + OFL 许可证，解压即用：**
 
-每个压缩包内含 `ttf/` 与 `woff2/` 两个目录（8 档字重）+ OFL 许可证，解压即用。两套方案共用同一套质量门槛（`verify.py` / JBM 全字形不变量 / HarfBuzz 塑形 / 元数据审计），除 CJK 几何外一切一致。
+| 压缩包 | 方案 | 格式 | 方案差异 |
+|---|---|---|---|
+| `JetHanMono-<版本>-Centered.zip` | 居中版（默认 / 推荐） | TTF ×8（桌面安装） | 轮廓**不缩放**，1000u 设计盒水平居中于 1200u 全角格；汉字 = 思源原样字面（"中"墨高 ~919u），全部墨迹在 JBM 行高度量（1020/-300）内 |
+| `JetHanMono-<版本>-Scaled.zip` | 缩放版（满格派） | TTF ×8（桌面安装） | 轮廓双轴 **×1.2** 放大恰好填满 1200u 全角格；汉字比上游高 20%（"中"墨高 ~1103u），字面更满，接近传统中文字体；顶部会略超拉丁上伸部 |
+| `JetHanMono-<版本>-Centered_woff.zip` | 居中版 | WOFF2 ×8（Web） | 同居中版，Web 嵌入用 |
+| `JetHanMono-<版本>-Scaled_woff.zip` | 缩放版 | WOFF2 ×8（Web） | 同缩放版，Web 嵌入用 |
+
+**散装字体（全部 32 个）——压缩包外的单个字体文件名带 `-Centered` / `-Scaled` 后缀：**
+
+```
+JetHanMono-<字重>-Centered.ttf   JetHanMono-<字重>-Scaled.ttf
+JetHanMono-<字重>-Centered.woff2 JetHanMono-<字重>-Scaled.woff2
+```
+
+内容与压缩包内完全一致，仅文件名加方案后缀便于区分（如 `JetHanMono-Bold-Centered.ttf`），需要单档字重时可免解包直接下载；预览站即从 Latest Release 加载这批散装 woff2。
+
+两套方案共用同一套质量门槛（`verify.py` / JBM 全字形不变量 / HarfBuzz 塑形 / 元数据审计），除 CJK 几何外一切一致。
 
 > 历史：v1.001–v1.002 曾在"缩放"与"居中"之间反复；v3 定版居中方案后，应需求自 1.003 起将缩放方案以独立包形式并线提供，两者长期共存、同版本号发布。
 
@@ -109,8 +123,11 @@ font-build/
 └── output/<variant>/   # 构建产物（centered/ 与 scaled/ 各一套，文件名相同）
 .github/workflows/      # GitHub Actions：build / test / release 三 job，
                         # 测试为发布质量门槛（dispatch 可选跑、默认勾选）；
-                        # release 按变体打两个压缩包；metadata-audit 逐包审计分发资产
-src/app/                # 字体预览 / 下载页（Next.js，含 2:1 对齐演示，默认展示居中版）
+                        # release 打 4 个压缩包（居中/缩放 x ttf/woff2，包内无后缀）
+                        # + 32 个散装字体（带 -Centered/-Scaled 后缀）；
+                        # metadata-audit 逐包审计分发资产
+src/app/                # 字体预览 / 下载页（Next.js，含 2:1 对齐演示，
+                        # 字体从 GitHub Latest Release 动态加载，默认展示居中版）
 ```
 
 ## 命名与许可

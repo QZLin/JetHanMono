@@ -15,6 +15,11 @@
 用法:
   python3 audit_metadata.py <目录或字体文件...> [--report report.json]
 
+  输入可以是 ttf、woff2 或两者混合 (自动识别); 仅含 woff2 的输入
+  (如 1.004+ 的 Centered_woff/Scaled_woff 包) 直接跑 M2-M12 核心审计,
+  M9 (2:1 网格字形级检查) 与 M14 (woff2-ttf 孪生比对) 由同版本 TTF 包
+  覆盖, 不在 woff2 包内重复。
+
 检查范围 (M1-M15): 字体修订/日期/命名/厂商标识/RIBBI 位/ulUnicodeRange
 按 cmap 重算/cmap 双子表与 2:1 网格/垂直度量锁/post 等宽位/跨字重一致性/
 woff2 与 ttf 元数据一致/OFL 文本完整性/保留字体名清理.
@@ -259,8 +264,8 @@ def main():
 
     print(f"== 审计目标: ttf x{len(fonts)}  woff2 x{len(woff2s)}  "
           f"OFL={'有' if ofls else '无'} ==")
-    if not fonts:
-        sys.exit("ERROR: 未找到任何 .ttf 文件")
+    if not fonts and not woff2s:
+        sys.exit("ERROR: 未找到任何 .ttf/.woff2 文件")
 
     # M1: 表结构健全性 + 逐字体 M2-M12
     summaries = {}
@@ -273,14 +278,17 @@ def main():
         f.close()
         summaries[fn] = audit_font(fp, prefix)
 
-    # M13: ttf 间跨字重一致性
-    audit_cross_weight({k: v for k, v in summaries.items()
-                        if not k.endswith(".woff2")}, "[cross]")
+    # M13: 跨字重一致性 (TTF 包按 ttf; 仅 woff2 的包按 woff2; 混合输入
+    # 不能取并集 -- 同字重的 ttf/woff2 孪生 usWeightClass 相同, 会误报重复)
+    ttf_summaries = {k: v for k, v in summaries.items()
+                     if not k.endswith(".woff2")}
+    audit_cross_weight(ttf_summaries or summaries, "[cross]")
 
-    # M14: woff2 与同名 ttf 元数据一致
+    # M14: woff2 与同名 ttf 元数据一致 (无 ttf 孪生时退化为独立核心审计)
     for fn, fp in sorted(woff2s.items()):
         twin = fn.replace(".woff2", ".ttf")
         if twin not in fonts:
+            summaries[fn] = audit_font(fp, f"[{fn}]")
             continue
         w = audit_font(fp, f"[{fn}]")  # 顺带跑核心检查 (brotli 解码)
         t = summaries[twin]
