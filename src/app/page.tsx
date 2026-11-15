@@ -300,6 +300,12 @@ export default function Home() {
           setWeightReady((prev) => ({ ...prev, [name]: true }))
           return true
         } catch {
+          // 加载失败的字形从 FontFaceSet 移除，避免污染重试/换源后的匹配
+          try {
+            document.fonts.delete(face)
+          } catch {
+            /* ignore */
+          }
           return false
         }
       }

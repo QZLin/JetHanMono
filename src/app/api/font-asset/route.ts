@@ -64,18 +64,40 @@ export async function GET(req: Request) {
     )
   }
 
-  let upstream: Response
-  try {
-    upstream = await fetch(asset.browser_download_url, {
-      headers: { 'User-Agent': 'JetHanMono-preview-site' },
-      cache: 'no-store',
-    })
-  } catch {
-    return NextResponse.json({ error: '拉取资产失败' }, { status: 502 })
+  // 拉取资产字节（带重试：GitHub 资产 CDN 偶发连接失败/限流，
+  // 连接失败与 5xx/429 重试，其余 4xx 不重试）
+  let upstream: Response | null = null
+  let lastDetail = ''
+  for (let attempt = 1; attempt <= 3 && !upstream; attempt++) {
+    try {
+      const r = await fetch(asset.browser_download_url, {
+        headers: { 'User-Agent': 'JetHanMono-preview-site' },
+        cache: 'no-store',
+      })
+      if (r.ok && r.body) {
+        upstream = r
+        break
+      }
+      lastDetail = `HTTP ${r.status}`
+      try {
+        await r.body?.cancel()
+      } catch {
+        /* ignore */
+      }
+      if (r.status === 429 || r.status >= 500) {
+        await new Promise((res) => setTimeout(res, 1200 * attempt))
+        continue
+      }
+      break // 4xx: 重试无意义
+    } catch (e) {
+      // 连接失败：退避后重试
+      lastDetail = e instanceof Error ? e.message : String(e)
+      await new Promise((res) => setTimeout(res, 1200 * attempt))
+    }
   }
-  if (!upstream.ok || !upstream.body) {
+  if (!upstream || !upstream.ok || !upstream.body) {
     return NextResponse.json(
-      { error: `上游资产下载失败 (HTTP ${upstream.status})` },
+      { error: `上游资产下载失败 (${lastDetail || '未知错误'})` },
       { status: 502 },
     )
   }
