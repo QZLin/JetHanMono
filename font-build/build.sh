@@ -260,7 +260,7 @@ GROUP_N=0
 while IFS=$'\t' read -r W gid nk; do
   if [ -n "${W:-}" ]; then
     GID_OF["$W"]="$gid"
-    NK_OF["$gid"]="$nk"
+    NK_OF["$gid"]="${nk%.*}"   # 去掉 .otf 扩展名, 与 NK_WEIGHTS 的基名约定一致
     if [ -z "${REP_OF[$gid]-}" ]; then REP_OF["$gid"]="$W"; GIDS+=("$gid"); GROUP_N=$((GROUP_N + 1)); fi
   fi
 done < "$GROUPS_TSV"
