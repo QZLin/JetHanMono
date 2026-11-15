@@ -16,7 +16,8 @@ name: Build JetHan Mono
 # job 结构:
 #   build   分组去重(8字重→6组) → 子集化 → CFF转TTF → 步进吸附 → 拼合
 #           → 改名+woff2 (SKIP_VERIFY=1, JOBS 阶段内并行, 校验拆至 test)
-#   test    verify.py 静态度量 + shape_test.py HarfBuzz 塑形, 8 字重
+#   test    verify.py 静态度量 + invariant_test.py 全字形 JBM 保真
+#           + shape_test.py HarfBuzz 塑形, 8 字重
 #           (--verify-only 模式: 下载 build 产物 + 上游缓存作对比基准)
 #   release 打包 JetHanMono-<版本>-ttf/woff2.zip 并发布
 #           (散装 8 字重 ttf/woff2 + OFL + 两个压缩包, 版本号取自 tag)
@@ -158,7 +159,7 @@ jobs:
           if-no-files-found: ignore
 
   test:
-    name: 校验 (verify + HarfBuzz shaping, 8 字重)
+    name: 校验 (verify + JBM 不变量 + HarfBuzz shaping, 8 字重)
     needs: build
     # push / tag 必跑 (发布质量门槛); 手动 dispatch 可取消勾选 (但取消则不发布)
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_tests == 'true'

@@ -48,9 +48,36 @@ bash build.sh --verify-only              # 只跑校验阶段（CI 的 test job 
 
 ## 管线（六步）
 
-子集化 `subset_cjk.py` → CFF→glyf `otf2ttf.py`（cu2qu）→ CJK 步进 1200u `scale_cjk.py` → 拼合 `merge_fonts.py`（fonttools Merger API）→ 命名与元数据 `rename.py` / `export_woff2.py` → 校验 `verify.py` / `shape_test.py`。
+子集化 `subset_cjk.py` → CFF→glyf `otf2ttf.py`（cu2qu）→ CJK 步进 1200u `scale_cjk.py` → 拼合 `merge_fonts.py`（fonttools Merger API）→ 命名与元数据 `rename.py` / `export_woff2.py` → 校验 `verify.py` / `invariant_test.py`（JBM 保真硬门槛）/ `shape_test.py`。
 
-## 设计契约
+## 核心设计契约（不可妥协）
+
+JetHanMono is an **additive extension** of JetBrains Mono, not a redesign or modification of its Latin typography:
+
+1. JetBrains Mono is the authoritative base font.
+2. Every glyph and character mapping already provided by JetBrains Mono must remain unchanged.
+3. Original JetBrains Mono advances, bearings, outlines, OpenType layout behavior, and shaping results must be preserved.
+4. CJK fonts may only supply glyphs for codepoints missing from the corresponding JetBrains Mono weight.
+5. CJK glyphs must conform to the 2:1 terminal-width grid without modifying existing JetBrains Mono glyph geometry.
+6. Mixed Latin/CJK text must preserve the exact shaping and positioning behavior of its Latin portions.
+7. Build optimizations must not weaken these invariants.
+
+中文要点：JBM 是唯一基底（全部原始 cmap 码位，不止 ASCII）；CJK 只补充缺失码位（`cjk_cmap − jb_cmap`）；中英混排不得改变英文的任何排版行为；中文适应 JBM 的 2:1 网格而非反向修改 JBM；**构建提速服从契约**（禁止修改 JBM 原字或其 GSUB/GPOS）。
+
+该契约由 `tools/invariant_test.py` 落地为自动化硬门槛（全字形级）：
+
+| 检查组 | 内容 |
+|---|---|
+| CMAP | 全部 JBM 码位 → 同名 glyph，无丢失/顶替 |
+| ORDER | JBM glyph 顺序作为前缀保留（glyph ID 稳定） |
+| GLYF | 全部 JBM 轮廓分解后逐点一致 |
+| HMTX | 全部 JBM (advance, lsb) 逐字形一致 |
+| OTL | GSUB/GPOS/GDEF 按 glyph 名序列化逐字一致；kern/morx 等不凭空出现 |
+| VMET | 纵向度量锁回 JBM（行高/基线不变） |
+| HB | 全码位 HarfBuzz 塑形（glyph/cluster/advance/offset）+ 连字语料 + calt 开关 |
+| MIX | 中英混排：英文片段塑形一致、英文簇零位移、CJK 簇 1200/600 网格 |
+
+## 设计契约（历史沿革）
 
 - **JBM 优先且完全一致**：非中文/全角码位的字形、步进与纵向度量（hhea ascent 1020 / descent −300）与原版 JetBrains Mono 一致，CJK 仅作缺失码位补充。
 - **CJK 轮廓不缩放**：思源等宽字形保持原始 1000u 设计与原始字高（观感 = 上游原样），仅步进吸附为 1200u（= 2×600u）并把原设计盒水平居中（1000→1200 偏移 +100u，500→600 +50u，920→1200 +140u）；垂直基线关系维持思源原设计。

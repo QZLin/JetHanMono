@@ -296,7 +296,12 @@ fi
 
 # ---------- 阶段 1/6: CJK 子集化 (按 gid 去重) ----------
 stage_subset() {
-  local gid="$1" W="${REP_OF[$gid]}" NK="${NK_OF[$gid]}" t0
+  # 注意: local 的多个赋值参数在部分 bash 构建中是"先整体展开再赋值",
+  # 依赖同命令前面赋值的展开(如 ${REP_OF[$gid]})会命中未定义变量。
+  # 因此依赖查找一律拆成独立命令, 不依赖展开顺序。
+  local gid="$1" t0 W NK
+  W="${REP_OF[$gid]}"
+  NK="${NK_OF[$gid]}"
   local out="subsetted/CJK-$gid.ttf"
   if STEP_UP2DATE "$out" "subsetted/.dh-$gid.subset" \
        "downloads/JetBrainsMono-$W.ttf" "downloads/$NK.otf" "tools/subset_cjk.py"; then
@@ -342,7 +347,9 @@ stage_scale() {
 
 # ---------- 阶段 4/6: 拼合 (每字重; 第一个字体优先, Merger API) ----------
 stage_merge() {
-  local W="$1" gid="${GID_OF[$W]}" t0
+  local W="$1" t0 gid
+  gid="${GID_OF[$W]}"
+  if [ -z "$gid" ]; then echo "ERROR: 分组映射缺少字重 '$W' (GID_OF)" >&2; return 1; fi
   local out="output/.merged-$W.ttf"
   if STEP_UP2DATE "$out" "output/.dh-$W.merge" \
        "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "tools/merge_fonts.py"; then
@@ -387,19 +394,24 @@ stage_rename() {
 
 # ---------- 阶段 6/6: 校验 (静态度量 + HarfBuzz shaping; 每字重) ----------
 stage_verify() {
-  local W="$1" gid="${GID_OF[$W]}" t0
+  local W="$1" t0 gid
+  gid="${GID_OF[$W]}"
+  if [ -z "$gid" ]; then echo "ERROR: 分组映射缺少字重 '$W' (GID_OF)" >&2; return 1; fi
   local vd="output/.dh-$W.verified"
   if STEP_UP2DATE "$vd" "$vd" \
        "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" \
-       "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py"; then
+       "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py" \
+       "tools/invariant_test.py"; then
     echo "  [$W] skip (产物指纹未变, 校验结论沿用)"
     return 0
   fi
   t0=$(date +%s)
   "$PYTHON_BIN" tools/verify.py "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" "output/JetHanMono-$W.ttf"
   "$PYTHON_BIN" tools/shape_test.py "downloads/JetBrainsMono-$W.ttf" "output/JetHanMono-$W.ttf"
+  "$PYTHON_BIN" tools/invariant_test.py "downloads/JetBrainsMono-$W.ttf" "output/JetHanMono-$W.ttf"
   STEP_MARK "$vd" "downloads/JetBrainsMono-$W.ttf" "converted/CJK-$gid.ttf" \
-    "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py"
+    "output/JetHanMono-$W.ttf" "tools/verify.py" "tools/shape_test.py" \
+    "tools/invariant_test.py"
   report_time verify "$W" "$(( $(date +%s) - t0 ))"
 }
 
@@ -438,7 +450,7 @@ else
 fi
 
 echo ""
-echo "== 6/6 校验 (静态度量 + HarfBuzz shaping) =="
+echo "== 6/6 校验 (静态度量 + HarfBuzz shaping + JBM 不变量) =="
 if [ "$SKIP_VERIFY" = "1" ]; then
   echo "  [verify] 跳过 (SKIP_VERIFY=1; CI 由独立 test job 执行)"
 else
