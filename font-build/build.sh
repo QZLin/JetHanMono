@@ -117,7 +117,7 @@ echo "构建字重: ${JB_WEIGHTS[*]}"
 echo "CJK 映射: ${NK_WEIGHTS[*]}"
 echo "JOBS=$JOBS  SKIP_WOFF2=$SKIP_WOFF2  SKIP_VERIFY=$SKIP_VERIFY  FORCE_BUILD=$FORCE  VERIFY_ONLY=$VERIFY_ONLY"
 
-LOGDIR=".build-logs"
+LOGDIR="build-logs"
 mkdir -p subsetted converted output "$LOGDIR/timing"
 rm -f "$LOGDIR"/timing/* 2>/dev/null || true
 
