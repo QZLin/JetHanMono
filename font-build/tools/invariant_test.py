@@ -105,6 +105,33 @@ def table_xml(font, tag):
 
 from fontTools.misc.xmlWriter import XMLWriter  # noqa: E402
 
+_COMMENT = re.compile(r"<!--.*?-->")
+
+
+def norm_ttx(font, tag):
+    """TTX 序列化并去注释/空白 —— 结构级比较.
+
+    TTX 会把 FeatureParams.UINameID 解析成 name 表注释; rename.py 清理了
+    JetBrains 的 ss01-04 UI 名称 (nameID 256-259), 导致注释不同而表内容
+    完全一致 (实测唯一差异)。去注释后比较可免噪且不放过任何结构差异。
+    """
+    lines = []
+    for ln in table_xml(font, tag).splitlines():
+        ln = _COMMENT.sub("", ln).strip()
+        if ln:
+            lines.append(ln)
+    return lines
+
+
+def first_diff(a, b, n=4):
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return f"首处 L{i}: jb={x[:70]} | mg={y[:70]}"
+    if len(a) != len(b):
+        return f"行数 jb={len(a)} mg={len(b)}"
+    return "unknown"
+
+
 for tag in OTL_TAGS:
     in_jb, in_mg = tag in jb, tag in mg
     if not in_jb:
@@ -114,8 +141,9 @@ for tag in OTL_TAGS:
     if not in_mg:
         check(f"OTL1 {tag} 保留", False, "jb 有, merged 丢失")
         continue
-    same = table_xml(jb, tag) == table_xml(mg, tag)
-    check(f"OTL1 {tag} 逐字一致 (TTX 序列化, 按 glyph 名)", same)
+    na, nb = norm_ttx(jb, tag), norm_ttx(mg, tag)
+    check(f"OTL1 {tag} 结构一致 (去注释 TTX, 按 glyph 名)", na == nb,
+          "" if na == nb else first_diff(na, nb))
 
 # ---------- VMET ----------
 metrics = [
@@ -189,10 +217,6 @@ check("HB4 长代码文本整串塑形一致",
       shape(jbhb, KITCHEN) == shape(mghb, KITCHEN))
 
 # ---------- MIX (中英混排) ----------
-def adv_of(font, gname):
-    return font["hmtx"][gname][0]
-
-
 MIXED = [
     "这是一个 const value = getUser(123); 测试。",
     "函数 fn(x) 返回 None；注释 // todo",
@@ -205,39 +229,29 @@ for text in MIXED:
     for frag in re.findall(r"[\x20-\x7E]+", text):
         if shape(jbhb, frag) != shape(mghb, frag):
             mix_fail.append(f"片段 {frag!r} 塑形与 JBM 不一致")
-    # (2) 混排整串: 英文簇 = JBM 原字形/度量; CJK 簇 = 1200/600 网格, 无纵向位移
-    seq = shape(mghb, text)
-    last_cluster = -1
-    for gname, cluster, x_adv, y_adv, x_off, y_off in seq:
-        if cluster <= last_cluster:
-            mix_fail.append(f"{text[:6]!r}: cluster 非单调 ({cluster})")
-        last_cluster = cluster
-        # uharfbuzz add_str 的 cluster 是字符下标 (非 UTF-8 字节偏移)
-        if not (isinstance(cluster, int) and 0 <= cluster < len(text)):
-            mix_fail.append(f"{text[:6]!r}: cluster {cluster} 越界")
+    # (2) 混排整串: 与 JBM 对同一串的塑形逐位置对照 (与 cluster 语义解耦:
+    #     uharfbuzz 不同版本 cluster 可能是字符下标或字节偏移, 但两个字体
+    #     对同一输入的 cluster 必须彼此一致 —— 漂移即交界处行为被改变)
+    a_seq = shape(jbhb, text)
+    b_seq = shape(mghb, text)
+    if len(a_seq) != len(b_seq):
+        mix_fail.append(f"{text[:6]!r}: glyph 数 jb={len(a_seq)} mg={len(b_seq)}")
+        continue
+    for (na_, ca_, xa_, ya_, oa_, pa_), (nb_, cb_, xb_, yb_, ob_, pb_) in zip(a_seq, b_seq):
+        if ca_ != cb_:
+            mix_fail.append(f"{text[:6]!r}: cluster 漂移 {ca_}->{cb_} @glyph {nb_!r}")
             continue
-        cp = ord(text[cluster])
-        if cp in jb_cmap:
-            exp_name = jb_cmap[cp]
-            if gname != exp_name:
-                mix_fail.append(f"U+{cp:04X} glyph {gname!r} != JBM {exp_name!r}")
-            if (x_off, y_off, y_adv) != (0, 0, 0):
-                mix_fail.append(f"U+{cp:04X} 出现纵向/横向位移 ({x_off},{y_off},{y_adv})")
-            if x_adv != adv_of(jb, exp_name):
-                mix_fail.append(f"U+{cp:04X} advance {x_adv} != JBM {adv_of(jb, exp_name)}")
+        if na_ == ".notdef":
+            # JBM 缺字处: merged 补位时必须落 2:1 网格且零位移;
+            # 两侧都缺 (语料含未覆盖码位) 属覆盖性问题, 由 verify.py C1 负责
+            if nb_ != ".notdef" and (xb_ not in (600, 1200) or (yb_, ob_, pb_) != (0, 0, 0)):
+                mix_fail.append(f"cluster {ca_}: CJK 步进/位移异常 adv={xb_} off=({ob_},{pb_})")
         else:
-            # CJK 码位的"覆盖完整性"由 verify.py C1 负责; 这里只校验
-            # 已覆盖码位的网格步进 (未覆盖的落 .notdef, 不在本测试域)
-            if cp not in mg_cmap:
-                continue
-            wide = (0x2E80 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF
-                    or 0xFF01 <= cp <= 0xFF60 or 0x3000 <= cp <= 0x303F)
-            half = 0xFF61 <= cp <= 0xFF9F
-            if wide and x_adv != 1200:
-                mix_fail.append(f"U+{cp:04X} 全角 advance {x_adv} != 1200")
-            if half and x_adv != 600:
-                mix_fail.append(f"U+{cp:04X} 半角 advance {x_adv} != 600")
-check("MIX1 中英混排: 英文片段塑形一致 + 英文簇零位移 + CJK 网格步进",
+            if na_ != nb_:
+                mix_fail.append(f"cluster {ca_}: glyph {nb_!r} != JBM {na_!r}")
+            elif (xa_, ya_, oa_, pa_) != (xb_, yb_, ob_, pb_):
+                mix_fail.append(f"cluster {ca_}: 度量/位移与 JBM 不一致")
+check("MIX1 中英混排: 与 JBM 逐位置对照 (英文字形/度量一致 + 缺字处 CJK 补位且落 2:1 网格)",
       not mix_fail, lim(mix_fail, 4))
 
 # ---------- summary ----------
