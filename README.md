@@ -3,7 +3,7 @@
 JetBrains Mono（拉丁 / 代码 / 编程连字）与思源等宽（Noto Sans Mono CJK SC，中文）拼合的等宽字体。
 
 - **严格 2:1 终端对齐**：拉丁步进 600u/1000em，CJK/全角字形步进吸附为 1200u——1 个汉字恰好等于 2 个英文字符宽，表格与混排对齐零漂移。
-- **双 CJK 方案分包发行**：居中版（默认，轮廓不缩放+留白居中）与缩放版（轮廓 ×1.2 填满全角格）各出 TTF 与 WOFF2 两个压缩包，字体内名相同，二选一安装。
+- **双 CJK 方案分包发行**：居中版（默认，轮廓不缩放+留白居中）与缩放版（轮廓 ×1.2 填满全角格）各出 TTF 与 WOFF2 两个压缩包，字体内名相同，二选一安装；自 1.005 起每个字体文件的描述字段（nameID 10）末尾标注所属方案（`Variant of this file: Centered / Scaled.`），可在系统字体属性中辨识已装方案。
 - **JetBrains Mono 优先**：拉丁、符号与 `calt` 编程连字全部取自 JBM；缺失字符回退思源等宽，中文渲染完整。
 - **8 档字重**：Thin 100 / ExtraLight 200 / Light 300 / Regular 400 / Medium 500 / SemiBold 600 / Bold 700 / ExtraBold 800。
 - **预览站动态加载**：预览页从 GitHub Latest Release 实时拉取散装 woff2 资产渲染，无需本地内置字体文件。
@@ -32,7 +32,22 @@ JetHanMono-<字重>-Centered.woff2 JetHanMono-<字重>-Scaled.woff2
 
 两套方案共用同一套质量门槛（`verify.py` / JBM 全字形不变量 / HarfBuzz 塑形 / 元数据审计），除 CJK 几何外一切一致。
 
-> 历史：v1.001–v1.002 曾在"缩放"与"居中"之间反复；v3 定版居中方案后，应需求自 1.003 起将缩放方案以独立包形式并线提供，两者长期共存、同版本号发布。
+> 历史：v1.001–v1.002 曾在"缩放"与"居中"之间反复；v3 定版居中方案后，应需求自 1.003 起将缩放方案以独立包形式并线提供，两者长期共存、同版本号发布。1.005 相对 1.004 无任何几何/度量变化，仅新增方案归属标注与构建依赖锁版。
+
+## 方案辨识与常见问题排查
+
+两方案共用家族名（设计使然），以下是辨装错/装旧/缓存不刷新的三板斧：
+
+1. **辨识已装方案**（1.005+）：右键字体文件 → 属性 → 详细信息 → "描述/Description"，末尾是 `Variant of this file: Centered.` 即居中版、`...Scaled.` 即缩放版。观感判断：缩放版墨迹满格（"中"墨高 ~1103u），居中版两侧各留约 0.1 格空白（~919u）。
+2. **解压注意**：四个压缩包内文件**同名**（无后缀，如 `JetHanMono-Regular.ttf`），解压到同一目录会静默互相覆盖——务必每个 zip 单独目录解压后再安装，否则极易把居中版当成缩放版装进去。
+3. **换版本重装姿势**：完全退出 IDE → 卸载全部 JetHan Mono 字体 → 重启（或重启 Windows Font Cache 服务）→ 安装新包 → 重新打开 IDE；Java 对字体文件缓存较激进，必要时 IDE 内再执行 File → Invalidate Caches。
+
+**编辑器中文右侧出现空白的排查顺序**：
+
+1. 先按第 1 条确认装的到底是哪个方案——居中版两侧留白属设计使然，不是缺陷；
+2. 确认后仍异常：按第 3 条彻底重装（同名覆盖安装是缓存错乱的高发源）；
+3. 用其它应用（VS Code、记事本）打开同一字体交叉验证，并把 IDE 在两次对比之间是否自动更新过纳入考虑（JetBrains Runtime 的 CJK 渲染有自己的历史问题，与字体文件无关时需单独排查）；
+4. 以上都排除后，携带字体版本（属性里的版本号）与 IDE 版本提 issue。
 
 ## CJK 侧字重来源
 
@@ -54,7 +69,7 @@ JetHanMono-<字重>-Centered.woff2 JetHanMono-<字重>-Scaled.woff2
 ## 构建
 
 ```bash
-pip install fonttools brotli uharfbuzz
+pip install fonttools==4.68.0 brotli==1.2.1 uharfbuzz==0.57.0   # 与 CI/uv.lock 同版, 保证产物可复现
 bash font-build/tools/fetch_sources.sh   # 下载上游源字体（3 个包，解压后约 145MB）
 cd font-build
 bash build.sh                            # 全部 8 档字重 x 双变体（默认串行）

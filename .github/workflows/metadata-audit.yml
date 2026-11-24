@@ -1,7 +1,7 @@
 name: Metadata Audit
 
 # 字体元数据独立审计: 对 *实际分发* 的字体文件执行
-# font-build/tools/audit_metadata.py (M1-M15, 契约常量与 rename.py 同源),
+# font-build/tools/audit_metadata.py (M1-M16, 契约常量与 rename.py 同源),
 # 与构建期 verify.py 的 H 段互补 —— 那道关卡保护"刚构建的", 这道保护
 # "用户下载到的": 资产被误覆盖、覆盖不完整、或手动改过 Release 都会被抓出。
 #
@@ -48,8 +48,9 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: 安装依赖 (fontTools + brotli, woff2 解码需要)
-        run: pip install fonttools brotli
+      - name: 安装依赖 (fontTools + brotli, 版本锁定)
+        # 与 build-font.yml / uv.lock 保持一致, 保证审计结果不受 fontTools 版本漂移影响
+        run: pip install fonttools==4.68.0 brotli==1.2.1
 
       - name: 解析目标 Release tag
         id: target
@@ -62,6 +63,17 @@ jobs:
             echo "未指定 tag, 使用最新发布版: $TAG"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # 1.005+ 的字体携带方案归属句 (nameID 10 尾句), 审计时强制校验;
+          # 更早版本无该标注, 只跑几何判定不强制。
+          # 比较基准: VER 与 1.005 排序后取较大者, 较大者==VER 即 VER>=1.005
+          VER="${TAG#jethan-v}"
+          if [ "$(printf '%s\n1.005\n' "$VER" | sort -V | tail -1)" = "$VER" ]; then
+            echo "require_marker=true" >> "$GITHUB_OUTPUT"
+            echo "版本 $VER >= 1.005: 启用方案归属句强制校验"
+          else
+            echo "require_marker=false" >> "$GITHUB_OUTPUT"
+            echo "版本 $VER < 1.005: 仅几何判定, 不强制归属句"
+          fi
 
       - name: 下载 Release 资产 (方案压缩包 + OFL)
         env:
@@ -85,6 +97,16 @@ jobs:
             echo "ERROR: Release 中 JetHanMono-*.zip 少于 4 个 (1.004+ 应为 Centered/Scaled/Centered_woff/Scaled_woff)" >&2
             exit 1
           fi
+          # 包名决定期望方案: 抓"包名是 Scaled 里面装的是 Centered"型错装
+          expect_of() {
+            case "$1" in
+              *Centered*) echo "centered" ;;
+              *Scaled*)   echo "scaled" ;;
+              *) echo "" ;;
+            esac
+          }
+          MARKER_FLAG=""
+          [ "${{ steps.target.outputs.require_marker }}" = "true" ] && MARKER_FLAG="--require-marker"
           for z in "${zips[@]}"; do
             name="$(basename "$z" .zip)"
             d="unpacked/$name"
@@ -94,16 +116,19 @@ jobs:
             ofl="$d/JetHanMono-OFL.txt"
             test -s "$ofl" || ofl="$d/ttf/JetHanMono-OFL.txt"
             test -s "$ofl" || { echo "ERROR: $name 内未找到 OFL.txt" >&2; exit 1; }
-            echo "== 审计 $name =="
+            EXPECT="$(expect_of "$name")"
+            EXTRA=""
+            [ -n "$EXPECT" ] && EXTRA="--expect-variant $EXPECT"
+            echo "== 审计 $name (expect-variant=${EXPECT:-未知}, marker=$MARKER_FLAG) =="
             if [ -d "$d/ttf" ]; then
               # 1.003 旧布局: ttf/ + woff2/ 目录
               python3 font-build/tools/audit_metadata.py \
-                "$d/ttf" "$d/woff2" "$ofl" \
+                "$d/ttf" "$d/woff2" "$ofl" $EXTRA $MARKER_FLAG \
                 --report "metadata-audit-report-${name}.json"
             else
               # 1.004+ 布局: 字体平铺在包根 (audit_metadata.py 自动识别 ttf/woff2/OFL)
               python3 font-build/tools/audit_metadata.py \
-                "$d" "$ofl" \
+                "$d" "$ofl" $EXTRA $MARKER_FLAG \
                 --report "metadata-audit-report-${name}.json"
             fi
           done

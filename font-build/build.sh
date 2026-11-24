@@ -346,7 +346,8 @@ stage_rename() {
   else
     t0=$(date +%s)
     cp -f "output/$VARIANT/.merged-$W.ttf" "$out"
-    "$PYTHON_BIN" tools/rename.py "$out"
+    # --variant: 以 中 字墨高实测几何为断言, 防止两变体产物串线时被静默命名
+    "$PYTHON_BIN" tools/rename.py --variant "$VARIANT" "$out"
     STEP_MARK "output/$VARIANT/.dh-$W.rename" "output/$VARIANT/.merged-$W.ttf" "tools/rename.py"
     report_time rename "$spec" "$(( $(date +%s) - t0 ))"
   fi

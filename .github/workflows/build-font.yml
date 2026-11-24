@@ -82,8 +82,11 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: 安装依赖 (fontTools + brotli + uharfbuzz)
-        run: pip install fonttools brotli uharfbuzz
+      - name: 安装依赖 (fontTools + brotli + uharfbuzz, 版本锁定)
+        # 精确锁定与 uv.lock 一致的已知可用版本: 未锁定的 pip install 会在
+        # 不同次构建间拉到不同新版 fontTools, 造成产物二进制不可复现
+        # (几何/度量回归由 verify/invariant 门槛兜底, 此处保证逐字节可复现)。
+        run: pip install fonttools==4.68.0 brotli==1.2.1 uharfbuzz==0.57.0
 
       - name: 恢复上游字体缓存 (JetBrains Mono + Noto CJK, ~140MB)
         id: font-cache
@@ -187,8 +190,11 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: 安装依赖 (fontTools + brotli + uharfbuzz)
-        run: pip install fonttools brotli uharfbuzz
+      - name: 安装依赖 (fontTools + brotli + uharfbuzz, 版本锁定)
+        # 精确锁定与 uv.lock 一致的已知可用版本: 未锁定的 pip install 会在
+        # 不同次构建间拉到不同新版 fontTools, 造成产物二进制不可复现
+        # (几何/度量回归由 verify/invariant 门槛兜底, 此处保证逐字节可复现)。
+        run: pip install fonttools==4.68.0 brotli==1.2.1 uharfbuzz==0.57.0
 
       - name: 恢复上游字体缓存 (verify/shape_test 的对比基准)
         id: font-cache
@@ -311,6 +317,10 @@ jobs:
             自 1.003 起提供两套 CJK 几何方案, **字体内部名称完全一致**（均为 JetHan Mono）,
             按需**二选一**下载安装（同名家族请勿同时安装, 会互相覆盖）。
 
+            **1.005 起每个字体文件的描述字段（nameID 10）末尾标注所属方案**
+            （"Variant of this file: Centered / Scaled."）, 可在系统字体属性中辨识已装方案;
+            1.005 相对 1.004 无任何几何/度量变化, 仅新增该标注与构建依赖锁版。
+
             ## 压缩包（4 个, 包内字体文件**不带**变体后缀, 平铺 + OFL, 解压即用）
 
             | 压缩包 | 方案 | 内容 |
@@ -336,6 +346,19 @@ jobs:
             - **缩放版 Scaled（满格派）**: CJK 轮廓双轴 x1.2 放大填满 1200u 全角格（"中"墨高
               ~1103u, 比上游高 20%）, 更接近传统中文字体的字面率; 汉字顶部会略超出拉丁上伸部,
               属该方案已知取舍。
+
+            ## 方案辨识与排障
+
+            - 辨识已装方案: 字体文件属性 → 详细信息 → "描述/Description" 末尾
+              `Variant of this file: Centered.` / `...Scaled.`（1.005+）；或直接看观感:
+              缩放版墨迹满格, 居中版两侧各留约 0.1 格空白。
+            - 解压四个压缩包时请**各自解压到独立目录**: 包内文件同名（无后缀）,
+              解压到同一目录会静默互相覆盖, 极易装错方案。
+            - 更新版本建议: 卸载全部 JetHan Mono → 重启（或重启 Windows Font Cache 服务）
+              → 安装新包 → 完全退出并重启 IDE（Java 对字体文件的缓存较激进）。
+            - 编辑器中文两侧/右侧出现空白: 先按上面方法确认装的是哪个方案
+              （居中方案两侧留白属设计使然）, 再用其它应用交叉验证,
+              并检查 IDE 是否在两次对比之间自动更新过。
 
             - 英文/代码字形: JetBrains Mono v2.304（优先, 含编程连字 calt）
             - 中文字形: 思源等宽 / Noto Sans Mono CJK SC（CJK 补充, 全宽 1200u = 2×拉丁 600u）

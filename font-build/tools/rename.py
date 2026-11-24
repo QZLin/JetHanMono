@@ -65,7 +65,10 @@ sys.path.insert(0, HERE)
 from os2_ranges import OS2_RANGES  # noqa: E402  (generated, same dir)
 
 FAMILY = "JetHan Mono"
-VERSION = "1.004"   # 1.004: 发行重构 -- 4 压缩包 (居中/缩放 x ttf/woff2, 包内无后缀)
+VERSION = "1.005"   # 1.005: nameID 10 标注方案归属 (Variant: Centered/Scaled),
+                    #        解决"两方案同名无法辨识已装哪个"的排查难题
+                    #        (不改家族名/PS 名, 双方案照旧同名共存);
+                    # 1.004: 发行重构 -- 4 压缩包 (居中/缩放 x ttf/woff2, 包内无后缀)
                     #        + 32 个散装字体资产 (文件名带 -Centered/-Scaled 后缀);
                     # 1.003: 居中/缩放双变体分包发布 (字体内名不变); 1.002: v3 几何定版
                     # (CJK 不缩放+水平居中, 回退 v2 x1.2); 1.001: 补齐元数据
@@ -77,7 +80,7 @@ BUILDER = "fontbuild"
 #  recalcTimestamp=True 再次用当前时间覆盖 modified -- 所以除固定值外
 #  还必须关掉 recalcTimestamp, 见 rename_font 内)
 # fontTools 内部把这两个字段存为 Mac 纪元 (1904-01-01) 整秒
-RELEASE_DATE_STR = "2026-11-15 00:00:00"
+RELEASE_DATE_STR = "2026-11-24 00:00:00"
 RELEASE_DATE = int(
     (datetime.fromisoformat(RELEASE_DATE_STR) - datetime(1904, 1, 1)).total_seconds()
 )
@@ -125,7 +128,7 @@ DESIGNER = (
     "Philipp Nurullin, Konstantin Bulenkov (JetBrains Mono); "
     "Ryoko NISHIZUKA, Paul D. Hunt (Source Han Mono)"
 )
-DESCRIPTION = (
+DESCRIPTION_BASE = (
     "Merged monospace font: JetBrains Mono glyphs (Latin, code, programming "
     "ligatures) take priority; Source Han Mono glyphs fill Chinese/CJK. "
     "Ligatures via JetBrains GSUB (calt) preserved; CJK advances snapped to "
@@ -134,6 +137,47 @@ DESCRIPTION = (
     "Centered (unscaled outlines, centered in the 1200u cell) and Scaled "
     "(outlines x1.2 to fill the cell)."
 )
+
+# 方案归属句 (追加在 DESCRIPTION_BASE 之后, 随每个字体文件落盘):
+# 两方案共用家族名 "JetHan Mono" (设计使然), 因此从字体属性里无从分辨
+# 装的是哪套 -- 1.005 起在描述字段末尾写死本文件所属方案, 供用户/审计辨识。
+VARIANT_TEXT = {
+    "centered": "Variant of this file: Centered.",
+    "scaled": "Variant of this file: Scaled.",
+}
+
+
+def description_for(variant):
+    return f"{DESCRIPTION_BASE} {VARIANT_TEXT[variant]}"
+
+
+# 变体几何检测 (判据与 scale_cjk.py 的 probe 同源, 以 中 字墨高为准):
+# centered = 上游未缩放 (中 墨高 ~919u <= 1000); scaled = 双轴 x1.2 (~1103u).
+# 两者墨高区间 (<=1000 与 (1000,1200]) 无重叠, 不会互相误判;
+# > 1200 说明被缩放了两次, 视为未知并拒绝。
+V2_INK_TELL = 1000
+SCALED_INK_MAX = 1200
+
+
+def detect_variant(font):
+    """按 中 字实际几何判定变体: 'centered' / 'scaled' / None(无法判定)."""
+    g = font.getBestCmap().get(0x4E2D)
+    if g is None:
+        return None
+    glyph = font["glyf"][g]
+    if glyph.numberOfContours <= 0:
+        return None
+    if font["hmtx"][g][0] != 1200:
+        return None
+    coords, _ends, _flags = glyph.getCoordinates(font["glyf"])
+    ys = [p[1] for p in coords]
+    ink = max(ys) - min(ys)
+    if ink <= V2_INK_TELL:
+        return "centered"
+    if ink <= SCALED_INK_MAX:
+        return "scaled"
+    return None
+
 
 # IDs we fully control (rebuilt from scratch below); 8/11 vendor identity
 # + 16/17 typographic pair added per weight.  7 (trademark) and 12
@@ -211,8 +255,19 @@ def make_license_text():
     return header + "\n" + body + "\n"
 
 
-def rename_font(path):
+def rename_font(path, expect_variant=None):
     f = TTFont(path, recalcTimestamp=False)  # 固定 modified, 不让 save 写入当前时间
+
+    # 方案归属: 以实际几何为准 (中 字墨高), --variant 仅作断言防呆
+    variant = detect_variant(f)
+    if expect_variant and variant != expect_variant:
+        sys.exit(f"ERROR: {path}: 实际几何判定为 {variant!r}, 与 --variant "
+                 f"{expect_variant!r} 不符 -- 输入不是预期方案的产物,"
+                 f"拒绝命名 (防止方案标错/产物串线)")
+    if variant is None:
+        sys.exit(f"ERROR: {path}: 无法从 中 字几何判定变体"
+                 f"(缺 中 / adv!=1200 / 双重缩放) -- 拒绝命名")
+
     name = f["name"]
     weight = f["OS/2"].usWeightClass
     if weight not in WEIGHT_NAMES:
@@ -234,7 +289,7 @@ def rename_font(path):
     set_name(f, 6, ps)                                      # PostScript name
     set_name(f, 8, MANUFACTURER)                            # manufacturer
     set_name(f, 9, DESIGNER)                                # designer
-    set_name(f, 10, DESCRIPTION)                            # description
+    set_name(f, 10, description_for(variant))              # description (含方案归属)
     set_name(f, 11, VENDOR_URL)                             # vendor URL (本项目的家)
     set_name(f, 13, ("This Font Software is licensed under the SIL Open Font License, "
                      "Version 1.1. This license is available with a FAQ at: "
@@ -332,7 +387,8 @@ def rename_font(path):
 
     f.save(path)
     n16 = name.getDebugName(16)
-    print(f"{path}: family(1)='{name.getDebugName(1)}' sub(2)='{name.getDebugName(2)}' "
+    print(f"{path}: variant={variant} family(1)='{name.getDebugName(1)}' "
+          f"sub(2)='{name.getDebugName(2)}' "
           f"typo16={n16!r} typo17={name.getDebugName(17)!r} ps='{ps}' v={VERSION} "
           f"weightClass={weight} fsSelection={fs:#06x} macStyle={mac:#04x} "
           f"nameRecords={len(name.names)} advanceWidthMax={amax} "
@@ -346,7 +402,8 @@ def rename_font(path):
 def main():
     argv = sys.argv[1:]
     if not argv:
-        sys.exit("usage: rename.py <font.ttf> [more.ttf ...]  |  --license-only <output_dir>")
+        sys.exit("usage: rename.py [--variant centered|scaled] <font.ttf> [more.ttf ...]"
+                 "  |  --license-only <output_dir>")
 
     # --license-only: just (re)write JetHanMono-OFL.txt, no font touched.
     # Used by build.sh's incremental OFL step so the license has its own
@@ -365,8 +422,17 @@ def main():
         print(f"license file written: {lic_path} ({len(lic)} bytes)")
         return
 
+    expect_variant = None
+    if argv and argv[0] == "--variant":
+        if len(argv) < 2 or argv[1] not in VARIANT_TEXT:
+            sys.exit("usage: rename.py [--variant centered|scaled] <font.ttf> [more.ttf ...]")
+        expect_variant = argv[1]
+        argv = argv[2:]
+    if not argv:
+        sys.exit("usage: rename.py [--variant centered|scaled] <font.ttf> [more.ttf ...]")
+
     for p in argv:
-        rename_font(p)
+        rename_font(p, expect_variant)
 
     lic = make_license_text()
     lic_path = os.path.join(os.path.dirname(argv[0]) or ".", "JetHanMono-OFL.txt")

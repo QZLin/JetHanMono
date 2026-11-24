@@ -14,15 +14,22 @@
 
 用法:
   python3 audit_metadata.py <目录或字体文件...> [--report report.json]
+      [--expect-variant centered|scaled] [--require-marker]
+
+  --expect-variant: 目录/包内所有字体必须属于该方案 (metadata-audit
+      workflow 按压缩包名传入, 抓"包名是 Scaled 里面装的是 Centered"型错装)
+  --require-marker: 要求每个字体 nameID 10 末尾携带方案归属句并与几何一致
+      (1.005+ 发行应始终携带; 审计更旧版本时不传, 向后兼容)
 
   输入可以是 ttf、woff2 或两者混合 (自动识别); 仅含 woff2 的输入
   (如 1.004+ 的 Centered_woff/Scaled_woff 包) 直接跑 M2-M12 核心审计,
   M9 (2:1 网格字形级检查) 与 M14 (woff2-ttf 孪生比对) 由同版本 TTF 包
   覆盖, 不在 woff2 包内重复。
 
-检查范围 (M1-M15): 字体修订/日期/命名/厂商标识/RIBBI 位/ulUnicodeRange
+检查范围 (M1-M16): 字体修订/日期/命名/厂商标识/RIBBI 位/ulUnicodeRange
 按 cmap 重算/cmap 双子表与 2:1 网格/垂直度量锁/post 等宽位/跨字重一致性/
-woff2 与 ttf 元数据一致/OFL 文本完整性/保留字体名清理.
+woff2 与 ttf 元数据一致/OFL 文本完整性/保留字体名清理/方案归属标注
+(nameID 10 尾句与 中 字实测几何互证).
 """
 import argparse
 import json
@@ -35,7 +42,7 @@ sys.path.insert(0, HERE)
 from fontTools.ttLib import TTFont  # noqa: E402
 from rename import (  # noqa: E402
     FAMILY, VERSION, RELEASE_DATE, MANUFACTURER, VENDOR_URL, VEND_ID,
-    WEIGHT_NAMES, compute_unicode_ranges,
+    WEIGHT_NAMES, compute_unicode_ranges, description_for, detect_variant,
 )
 
 # 期望的完整字重集 (目录内 8 个 ttf 齐全时才启用完整性检查)
@@ -184,8 +191,32 @@ def audit_font(path, prefix):
           f"fixed={post.isFixedPitch} angle={post.italicAngle} "
           f"declared={hhea.advanceWidthMax} real={real_max}")
 
+    # ---- M16 方案归属标注 (1.005+): nameID 10 尾句与 中 字实测几何互证 ----
+    # 两方案共用家族名, 用户/审计只能靠本字段与几何辨识已装方案;
+    # 包错装/文件被旧版覆盖/手动调包都会在这里现形。
+    # 规则: 几何必须可判定; 归属句一旦携带就必须与几何一致
+    # (1.005 之前的字体不携带归属句, 不因此判败 -- 由 --require-marker 控制强度)。
+    detected = detect_variant(f)
+    desc10 = name.getDebugName(10) or ""
+    marked_ok = desc10 == description_for(detected) if detected else False
+    if detected is None:
+        ok16, det16 = False, f"无法从 中 字几何判定方案 (desc10尾={desc10[-48:]!r})"
+    elif "Variant of this file:" in desc10 and not marked_ok:
+        ok16, det16 = False, f"几何={detected} 归属句不符: ...{desc10[-72:]!r}"
+    else:
+        ok16, det16 = True, f"几何={detected} 归属句={'正确' if marked_ok else '未携带(1.005 前正常)'}"
+    check(prefix, "M16 方案归属句与几何一致", ok16, det16)
+    # 文件名带方案后缀时 (散装资产) 与归属互证
+    fn_l = os.path.basename(path).lower()
+    if "-centered" in fn_l or "-scaled" in fn_l:
+        want = "centered" if "-centered" in fn_l else "scaled"
+        check(prefix, "M16b 文件名方案后缀 == 实际几何", detected == want,
+              f"文件名={want} 几何={detected}")
+
     return {
         "weight": weight,
+        "variant": detected,
+        "marker": bool(detected is not None and desc10 == description_for(detected)),
         "fontRevision": head.fontRevision,
         "created": head.created, "modified": head.modified,
         "vendID": os2.achVendID,
@@ -242,6 +273,10 @@ def main():
     ap = argparse.ArgumentParser(description="JetHan Mono 元数据审计")
     ap.add_argument("paths", nargs="+", help="字体文件或目录 (ttf/woff2/OFL)")
     ap.add_argument("--report", help="把结果写入 JSON 文件")
+    ap.add_argument("--expect-variant", choices=("centered", "scaled"),
+                    help="目录/包内所有字体必须属于该方案 (按压缩包名传入)")
+    ap.add_argument("--require-marker", action="store_true",
+                    help="要求每个字体携带 nameID 10 方案归属句且与几何一致 (1.005+ 发行契约)")
     args = ap.parse_args()
 
     fonts, woff2s, ofls = {}, {}, None
@@ -299,6 +334,17 @@ def main():
                 and w["weight"] == t["weight"])
         check(f"[{fn}]", "M14 woff2 与 ttf 元数据一致", same,
               f"woff2={ {k: w[k] for k in ('fontRevision','vendID')} }")
+
+    # M16 强度增强: 包级方案归属 / 标注强制
+    if args.expect_variant:
+        bad = sorted(fn for fn, s in summaries.items()
+                     if s.get("variant") != args.expect_variant)
+        check("[pkg]", f"M16 包内全部字体属于 {args.expect_variant} 方案", not bad,
+              f"不符={bad[:5]}")
+    if args.require_marker:
+        bad = sorted(fn for fn, s in summaries.items() if not s.get("marker"))
+        check("[pkg]", "M16 包内全部字体携带方案归属句", not bad,
+              f"缺={bad[:5]}")
 
     if ofls:
         audit_ofl(ofls, "[OFL]")
